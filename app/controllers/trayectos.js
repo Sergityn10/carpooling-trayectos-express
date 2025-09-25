@@ -81,9 +81,10 @@ async function obtenerTrayectoPorId(req, res) {
         return res.status(404).send({status: "Error", message: "Trayecto no encontrado"});
     }
     const trayecto = rows[0];
-    const fechaHora = new Date(trayecto.hora).toLocaleString();
-    console.log(fechaHora);
-    return res.status(200).json({...trayecto, hora: fechaHora});
+    const fecha = new Date(trayecto.hora).toDateString()
+    console.log(fecha)
+    const fechaHora = new Date(trayecto.hora).toISOString()
+    return res.status(200).json({...trayecto, hora: fechaHora, fecha});
 }
 
 async function actualizarTrayecto(req, res) {

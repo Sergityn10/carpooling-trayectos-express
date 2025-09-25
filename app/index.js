@@ -5,6 +5,7 @@ import cors from "cors"
 import {database} from "./database.js"
 import { TrayectosController } from "./controllers/trayectos.js"
 import { ReservaController } from "./controllers/reserva.js"
+import { OpinionsController } from "./controllers/opinions.js"
 const app = express()
 
 //Configuracion del puerto del servidor
@@ -54,6 +55,32 @@ app.delete("/api/trayecto/:id", async (req, res) => {
     TrayectosController.eliminarTrayecto(req, res);
 })
 
+
+//Comentarios 
+
+app.post("/api/comments", async (req, res) => {
+    // Llama a la función addOpinion del controlador de opiniones
+    OpinionsController.addOpinion(req, res);
+});
+
+app.get("/api/comments/username_commentator/:username", async (req, res) => {
+    // Llama a la función getOpinionByUsernameCommented del controlador de opiniones
+    OpinionsController.getOpinionByUsernameCommentator(req, res);
+});
+
+app.get("/api/comments/username_trayect/:username", async (req, res) => {
+    // Llama a la función getOpinionByUsernameCommented del controlador de opiniones
+    OpinionsController.getOpinionByUsernameTrayect(req, res);
+});
+app.get("/api/comments/travelId/:travelId", async (req, res) => {
+    OpinionsController.getOpinionsByTravelId(req, res);
+});
+app.delete("/api/comments/:id", async (req, res) => {
+    OpinionsController.deleteOpinion(req, res);
+});
+app.patch("/api/comments/:id", async (req, res) => {
+    OpinionsController.patchComment(req, res);
+});
 
 //RESERVAS
 app.post("/api/reserva", async (req, res) => {
