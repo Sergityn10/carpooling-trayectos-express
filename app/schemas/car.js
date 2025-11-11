@@ -6,8 +6,9 @@ const CarSchema = z.object({
     marca: z.string(),
     modelo: z.string(),
     color: z.string(),
-    anyo: z.number(),
-    tipo: z.string(),
+    numero_plazas: z.number().int().positive().max(7),
+    year: z.number(),
+    tipo_combustible: z.enum(['Diesel', 'Gasolina', 'Electrico', 'Hibrido']),
     
 })
 
