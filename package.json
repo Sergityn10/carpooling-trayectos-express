@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "API para craer trayectos de carpooling",
   "main": "index.js",
-  "type":"module",
+  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon --exec node app/index.js"
@@ -17,6 +17,7 @@
     "express": "^5.1.0",
     "mysql": "^2.18.1",
     "mysql2": "^3.14.4",
+    "stripe": "^19.1.0",
     "zod": "^4.1.5"
   },
   "devDependencies": {

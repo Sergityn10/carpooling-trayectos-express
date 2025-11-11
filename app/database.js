@@ -1,6 +1,6 @@
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
-import { ConnectionError } from './errors/ConnectionError.js';
+
 dotenv.config();
 const databaseConnection = mysql.createConnection({
     host: process.env.DATABASE_HOST || 'localhost',

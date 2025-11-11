@@ -8,12 +8,13 @@ const trayectSchema = z.object({
     fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     hora: z.string().min(5).max(5).regex(horaRegex),
     plazas: z.number().min(1).max(7),
+    precio: z.number().min(0), 
     conductor: z.string().min(1).max(50),
-    disponible: z.number().int().min(0).max(7).optional()
+    disponible: z.number().int().min(0).max(7).optional(),
+    routeIndex: z.number().int().optional()
 });
 
 const trayectoSchemaPartial = trayectSchema.partial();
-
 
 const trayectSchemaSinId = trayectSchema.omit({ id: true });
 
