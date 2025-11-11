@@ -9,9 +9,10 @@ CREATE TABLE ubicaciones (
     country VARCHAR(100),
     postal_code VARCHAR(100),
     type VARCHAR(100),
-    username VARCHAR(100) NOT NULL
+    username VARCHAR(500) NOT NULL,
+    FOREIGN KEY (username) REFERENCES users(username),
 );
-
+DROP TABLE ubicaciones;
 ALTER TABLE ubicaciones ADD CONSTRAINT unique_address_username UNIQUE (address, username);
 
 ALTER TABLE ubicaciones 
