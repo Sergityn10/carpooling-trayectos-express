@@ -8,3 +8,26 @@ CREATE TABLE cars (
     year SMALLINT UNSIGNED NOT NULL,
     tipo VARCHAR(50) NOT NULL
 );
+
+CREATE TABLE cars (
+    -- 1. Clave primaria con autoincremento
+    id_car INTEGER PRIMARY KEY AUTOINCREMENT,
+    
+    -- 2. Tipos de datos TEXT
+    matricula TEXT NOT NULL,
+    marca TEXT NOT NULL,
+    modelo TEXT NOT NULL,
+    color TEXT NULL,
+    
+    -- 3. Tipo ENUM sustituido por TEXT y restricción CHECK
+    tipo_combustible TEXT NOT NULL,
+    
+    -- 4. Tipos INTEGER
+    year INTEGER NOT NULL,
+    tipo TEXT NOT NULL,
+    
+    -- Restricción CHECK para simular el ENUM
+    CONSTRAINT chk_combustible CHECK (
+        tipo_combustible IN ('Diesel', 'Gasolina', 'Electrico', 'Hibrido')
+    )
+);

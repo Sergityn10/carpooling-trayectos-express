@@ -17,6 +17,47 @@ CREATE TABLE trayectos (
     FOREIGN KEY (conductor) REFERENCES users(username)
 );
 
+CREATE TABLE trayectos (
+    -- 1. Clave primaria SERIAL se convierte a INTEGER PRIMARY KEY AUTOINCREMENT
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    
+    -- 2. Cadenas de texto
+    origen TEXT NOT NULL,
+    destino TEXT NOT NULL,
+    
+    -- 3. TIMESTAMP se convierte a TEXT (formato ISO 8601) o INTEGER (UNIX Epoch)
+    hora TEXT NOT NULL,
+    
+    -- 4. Tipos INTEGER
+    plazas INTEGER NOT NULL,
+    disponible INTEGER NOT NULL,
+    
+    -- 5. Tipos numéricos para precios y coordenadas
+    precio REAL NOT NULL,
+    conductor TEXT NOT NULL,
+    routeIndex INTEGER NULL DEFAULT 0,
+    
+    -- 6. ENUM simulado con TEXT y DEFAULT
+    status TEXT NOT NULL DEFAULT 'programado',
+    
+    -- 7. DECIMAL se convierte a REAL
+    origen_lat REAL NULL,
+    origen_lng REAL NULL,
+    destino_lat REAL NULL,
+    destino_lng REAL NULL,
+    
+    -- 8. Clave Foránea
+    FOREIGN KEY (conductor) REFERENCES users(username),
+    
+    -- 9. Restricción CHECK
+    CONSTRAINT chk_plazas CHECK (plazas >= 1 AND plazas <= 4),
+    
+    -- 10. Restricción CHECK para simular el ENUM 'status'
+    CONSTRAINT chk_trayecto_status CHECK (
+        status IN ('en curso', 'programado', 'finalizado', 'cancelado')
+    )
+);
+
 ALTER TABLE trayectos ADD COLUMN disponible INT;
 ALTER TABLE trayectos ADD COLUMN routeIndex INT NULL DEFAULT 0;
 ALTER TABLE trayectos ADD COLUMN status ENUM("en curso", "programado", "finalizado", "cancelado") NOT NULL DEFAULT "programado";
