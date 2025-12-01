@@ -164,7 +164,9 @@ async function obtenerMisReservas(req, res){
 
     for (let i = 0; i < pasajerosList.length; i++) {
         const trayecto = await connection.query("SELECT * FROM trayectos WHERE id = ?", [pasajerosList[i].id_trayecto]);
+        const img_perfil = await connection.query("SELECT img_perfil FROM users WHERE username = ?", [trayecto[0][0].conductor]);
         pasajerosList[i].trayecto = trayecto[0][0];
+        pasajerosList[i].trayecto.img_perfil = img_perfil[0][0].img_perfil;
     }
 
     return res.status(200).send({
