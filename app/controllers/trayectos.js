@@ -345,8 +345,18 @@ async function buscarTrayectos(req, res) {
         //     [o, d, f, seats]
         // );
         const [rows] = await connection.query(SQL, params);
-
-        return res.status(200).json(rows);
+        // Agregar a todos los trayectos la img de perfil del conductor.
+        const trayectosConImagen = await Promise.all(
+            rows.map(async (trayecto) => {
+                const [imgRows] = await connection.query(
+                    "SELECT img_perfil FROM users WHERE username = ?",
+                    [trayecto.conductor]
+                );
+                const img_perfil = imgRows[0]?.img_perfil || null;
+                return { ...trayecto, img_perfil };
+            })
+        );
+        return res.status(200).json(trayectosConImagen);
     } catch (error) {
         console.error("Error en buscarTrayectos:", error);
         return res.status(500).send({ status: "Error", message: "Error en el servidor al buscar trayectos" });

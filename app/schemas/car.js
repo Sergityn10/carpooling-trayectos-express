@@ -9,7 +9,6 @@ const CarSchema = z.object({
     numero_plazas: z.number().int().positive().max(7),
     year: z.number(),
     tipo_combustible: z.enum(['Diesel', 'Gasolina', 'Electrico', 'Hibrido']),
-    
 })
 
 const CarSchemaPartial = CarSchema.partial();
