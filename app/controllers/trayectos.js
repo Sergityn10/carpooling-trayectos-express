@@ -100,17 +100,18 @@ async function obtenerTrayectoPorId(req, res) {
         return res.status(404).send({ status: "Error", message: "Trayecto no encontrado" });
     }
     const trayecto = rows[0];
-    const img_perfil = await connection.query("SELECT img_perfil FROM users WHERE username = ?", [trayecto.conductor]);
+    const [imgRows] = await connection.query("SELECT img_perfil FROM users WHERE username = ?", [trayecto.conductor]);
     const fecha = new Date(trayecto.hora).toDateString()
     console.log(fecha)
     const fechaHora = new Date(trayecto.hora + ".000Z").toISOString()
-    return res.status(200).json({ ...trayecto, hora: fechaHora, fecha, img_perfil: img_perfil[0].img_perfil });
+    return res.status(200).json({ ...trayecto, hora: fechaHora, fecha, img_perfil: imgRows[0]?.img_perfil });
 }
 
 async function obtenerTrayectosPorConductor(req, res) {
     const { username } = req.params;
     const connection = await database.getConnection();
     const [rows] = await connection.query("SELECT * FROM trayectos WHERE conductor = ?", [username]);
+    console.log(rows)
     const trayectos = await Promise.all(rows.map(async trayecto => {
         const img_perfil = await connection.query("SELECT img_perfil FROM users WHERE username = ?", [trayecto.conductor]);
         return { ...trayecto, img_perfil: img_perfil[0][0].img_perfil };
@@ -286,90 +287,68 @@ async function buscarTrayectos(req, res) {
         const userOriginCoords = await GoogleMapsProvider.geocodeAddress(o);
         const userDestCoords = await GoogleMapsProvider.geocodeAddress(d);
 
-        // 2. CONSTRUIR CONSULTA SQL AVANZADA CON DISTANCIA (Fórmula del Coseno)
-        // La Fórmula de Haversine es compleja para incrustar, esta aproximación funciona bien para distancias cortas.
-        const distanceQuery = (userLat, userLng, dbLatCol, dbLngCol) => `
-    (6371 * acos(
-        cos(radians(${userLat})) * cos(radians(${dbLatCol})) *
-        cos(radians(${dbLngCol}) - radians(${userLng})) +
-        sin(radians(${userLat})) * sin(radians(${dbLatCol}))
-    ))
-`;
+        // 2. Cálculo de bounding boxes y filtrado compatible con SQLite
+        const toRad = (deg) => deg * Math.PI / 180;
+        const toDeg = (rad) => rad * 180 / Math.PI;
+        const deltaLatDeg = toDeg(SEARCH_DISTANCE_KM / EARTH_RADIUS_KM);
+        const deltaLngDegOrigin = toDeg(SEARCH_DISTANCE_KM / (EARTH_RADIUS_KM * Math.cos(toRad(userOriginCoords.lat || 0.00001))));
+        const deltaLngDegDest = toDeg(SEARCH_DISTANCE_KM / (EARTH_RADIUS_KM * Math.cos(toRad(userDestCoords.lat || 0.00001))));
 
-        const originDistanceSQL = distanceQuery(
-            userOriginCoords.lat,
-            userOriginCoords.lng,
-            'origen_lat',
-            'origen_lng'
-        );
+        const originMinLat = userOriginCoords.lat - deltaLatDeg;
+        const originMaxLat = userOriginCoords.lat + deltaLatDeg;
+        const originMinLng = userOriginCoords.lng - deltaLngDegOrigin;
+        const originMaxLng = userOriginCoords.lng + deltaLngDegOrigin;
 
-        const destDistanceSQL = distanceQuery(
-            userDestCoords.lat,
-            userDestCoords.lng,
-            'destino_lat',
-            'destino_lng'
-        );
-
-        const SQL = `
-            SELECT 
-                *, 
-                ${originDistanceSQL} AS distance_from_origin,
-                ${destDistanceSQL} AS distance_from_destination
-            FROM trayectos
-            WHERE 
-                -- Filtro de Origen: La distancia calculada debe ser <= 0.2 km
-                (${originDistanceSQL} <= ?) AND
-                -- Filtro de Destino: La distancia calculada debe ser <= 0.2 km
-                (${destDistanceSQL} <= ?) AND
-                -- Filtro de Fecha
-                DATE(hora) = ? AND 
-                -- Filtro de Asientos
-                disponible >= ? 
-            ORDER BY distance_from_origin ASC, hora ASC
-            LIMIT ? OFFSET ?
-        `;
-
-        // 5. PARÁMETROS: Pasar los valores necesarios para la fórmula y los filtros
-        // Cada '?' en la función distanceQuery requiere 3 parámetros (lat, lng, lat).
-        const params = [
-            // Distancia Origen
-            SEARCH_DISTANCE_KM,
-            // Distancia Destino
-            SEARCH_DISTANCE_KM,
-            // Fecha (f ya está limpia como YYYY-MM-DD)
-            f,
-            // Asientos requeridos
-            seats,
-            // Limit de trayectos y Offset
-            limit,
-            offset
-        ];
-
+        const destMinLat = userDestCoords.lat - deltaLatDeg;
+        const destMaxLat = userDestCoords.lat + deltaLatDeg;
+        const destMinLng = userDestCoords.lng - deltaLngDegDest;
+        const destMaxLng = userDestCoords.lng + deltaLngDegDest;
 
         const connection = await database.getConnection();
-        // Consulta de conteo total sin LIMIT/OFFSET pero con los mismos filtros
-        const countSQL = `
-            SELECT COUNT(*) AS total
+
+        const baseSQL = `
+            SELECT *
             FROM trayectos
             WHERE 
-                (${originDistanceSQL} <= ?) AND
-                (${destDistanceSQL} <= ?) AND
+                origen_lat BETWEEN ? AND ? AND
+                origen_lng BETWEEN ? AND ? AND
+                destino_lat BETWEEN ? AND ? AND
+                destino_lng BETWEEN ? AND ? AND
                 DATE(hora) = ? AND 
                 disponible >= ?
+            ORDER BY hora ASC
         `;
-        const countParams = [
-            SEARCH_DISTANCE_KM,
-            SEARCH_DISTANCE_KM,
+        const baseParams = [
+            originMinLat, originMaxLat,
+            originMinLng, originMaxLng,
+            destMinLat, destMaxLat,
+            destMinLng, destMaxLng,
             f,
             seats,
         ];
-        const [countRows] = await connection.query(countSQL, countParams);
-        const total = countRows[0]?.total ?? 0;
-        // Consulta principal paginada
-        const [rows] = await connection.query(SQL, params);
-        // Agregar a todos los trayectos la img de perfil del conductor.
+
+        const [candidateRows] = await connection.query(baseSQL, baseParams);
+
+        const haversineKm = (lat1, lon1, lat2, lon2) => {
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return EARTH_RADIUS_KM * c;
+        };
+
+        const filtered = candidateRows.filter((t) => {
+            const dOrigin = haversineKm(userOriginCoords.lat, userOriginCoords.lng, t.origen_lat, t.origen_lng);
+            const dDest = haversineKm(userDestCoords.lat, userDestCoords.lng, t.destino_lat, t.destino_lng);
+            return dOrigin <= SEARCH_DISTANCE_KM && dDest <= SEARCH_DISTANCE_KM;
+        });
+
+        const total = filtered.length;
+        const totalPages = Math.max(Math.ceil(total / limit), 1);
+        const pageSlice = filtered.slice(offset, offset + limit);
+
         const trayectosConImagen = await Promise.all(
-            rows.map(async (trayecto) => {
+            pageSlice.map(async (trayecto) => {
                 const [imgRows] = await connection.query(
                     "SELECT img_perfil FROM users WHERE username = ?",
                     [trayecto.conductor]
@@ -378,21 +357,20 @@ async function buscarTrayectos(req, res) {
                 return { ...trayecto, img_perfil };
             })
         );
-        const totalPages = Math.max(Math.ceil(total / limit), 1);
-        return res.status(200).json(
-            {
-                data: trayectosConImagen,
-                pagination: {
-                    page,
-                    limit,
-                    total,
-                    totalPages,
-                    hasNext: page < totalPages,
-                    hasPrev: page > 1,
-                    nextPage: page < totalPages ? page + 1 : null,
-                    prevPage: page > 1 ? page - 1 : null
-                }
-            });
+
+        return res.status(200).json({
+            data: trayectosConImagen,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages,
+                hasNext: page < totalPages,
+                hasPrev: page > 1,
+                nextPage: page < totalPages ? page + 1 : null,
+                prevPage: page > 1 ? page - 1 : null
+            }
+        });
     } catch (error) {
         console.error("Error en buscarTrayectos:", error);
         return res.status(500).send({ status: "Error", message: "Error en el servidor al buscar trayectos" });
