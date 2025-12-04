@@ -3,6 +3,7 @@ import express from "express"
 import morgan from "morgan"
 import cors from "cors"
 import {database} from "./database.js"
+import { initDatabase } from "./database.js"
 import { TrayectosController } from "./controllers/trayectos.js"
 import { ReservaController } from "./controllers/reserva.js"
 import { OpinionsController } from "./controllers/opinions.js"
@@ -10,6 +11,8 @@ import { utilsAuthentication } from "./utils/authentication.js"
 import { UbicacionesController } from "./controllers/ubicaciones.js";
 
 const app = express()
+
+await initDatabase();
 
 //Configuracion del puerto del servidor
 app.set("port",4001)

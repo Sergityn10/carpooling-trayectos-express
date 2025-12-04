@@ -1,5 +1,5 @@
 import { ReservaSchema } from "../schemas/reserva.js";
-import {database} from "../database.js";
+import { database } from "../database.js";
 import dotenv from 'dotenv';
 
 import Stripe from "stripe";
@@ -14,7 +14,7 @@ async function addReserva(req, res) {
         return res.status(400).send({ status: "Error", message: JSON.parse(validation.error.message) });
     }
 
-    const { trayecto_id, status} = validation.data;
+    const { trayecto_id, status } = validation.data;
     const { username } = req.user;
 
     // Aquí iría la lógica para agregar la reserva a la base de datos
@@ -46,10 +46,10 @@ async function addReserva(req, res) {
             'Cookie': cookieHeaderValue
         },
         body: JSON.stringify({
-            amount:totalAmount,
-            destination:stripe_account,
+            amount: totalAmount,
+            destination: stripe_account,
             currency: "eur",
-            description : "Reserva de trayecto: " + trayecto_id + " desde " + trayecto.origen + " hasta " + trayecto.destino,
+            description: "Reserva de trayecto: " + trayecto_id + " desde " + trayecto.origen + " hasta " + trayecto.destino,
             success_url: "http://localhost:5173/trayecto/" + trayecto_id,
             cancel_url: "http://localhost:5173/trayecto/" + trayecto_id,
         }),
@@ -71,32 +71,32 @@ async function addReserva(req, res) {
         stripe_checkout_session_id: checkout_session.id,
 
     }
-    
+
     let stripe_payment_intent_id = checkout_session.payment_intent;
     let stripe_payment_intent_status = checkout_session.payment_status;
     let disponible = trayecto.disponible;
     console.log("Disponibilidad del trayecto:", disponible);
     // Si no hay disponibilidad, devolver un error
-    
+
 
     if (disponible === 0) {
         return res.status(404).send({ status: "Error", message: "El trayecto no tiene asiento libres" });
     }
 
     // Inserta la reserva en la base de datos
-    let result= null;
-    try{
+    let result = null;
+    try {
 
-    [result] = await connection.query(
-        "INSERT INTO reservas (username, id_trayecto, status, stripe_checkout_session_id) VALUES (?, ?, ?, ?)",
-        [username, trayecto_id, status, reserva.stripe_checkout_session_id]
-    );
+        [result] = await connection.query(
+            "INSERT INTO reservas (username, id_trayecto, status, stripe_checkout_session_id) VALUES (?, ?, ?, ?)",
+            [username, trayecto_id, status, reserva.stripe_checkout_session_id]
+        );
     }
-    catch(error){
+    catch (error) {
         switch (error.code) {
             case 'ER_NO_REFERENCED_ROW_2':
                 return res.status(400).send({ status: "Error", message: "El usuario o trayecto no existen" });
-                
+
             case 'ER_DUP_ENTRY':
                 return res.status(400).send({ status: "Error", message: "El usuario ya tiene una reserva para este trayecto" });
             default:
@@ -123,19 +123,22 @@ async function addReserva(req, res) {
 
 }
 
-async function getReservasByTravelId(req,res){
+async function getReservasByTravelId(req, res) {
     const { travelId } = req.params;
     const connection = await database.getConnection();
     const trayecto = await connection.query("SELECT * FROM trayectos WHERE id = ?", [travelId]);
-    if(trayecto[0].length === 0){
+    if (trayecto[0].length === 0) {
         return res.status(404).send({ status: "Error", message: "No se ha encontrado este trayecto" });
     }
     let pasajerosList = await connection.query("SELECT * FROM reservas WHERE id_trayecto = ?", [travelId]);
     pasajerosList = pasajerosList[0]
     //Agregar info adicional como la img_perfil y el nombre
+    if (pasajerosList.length === 0) {
+        return res.status(200).send({ status: "Success", message: "No se ha encontrado este trayecto o todavia no tiene reservas", pasajerosList: pasajerosList[0] });
+    }
     pasajerosList = await Promise.all(pasajerosList.map(async pasajero => {
         const img_perfil = await connection.query("SELECT img_perfil, name FROM users WHERE username = ?", [pasajero.username]);
-        return {...pasajero, img_perfil: img_perfil[0][0].img_perfil, nombre: img_perfil[0][0].nombre};
+        return { ...pasajero, img_perfil: img_perfil[0][0].img_perfil, nombre: img_perfil[0][0].nombre };
     }));
 
 
@@ -146,18 +149,18 @@ async function getReservasByTravelId(req,res){
 
 }
 
-async function obtenerMisReservas(req, res){
+async function obtenerMisReservas(req, res) {
     const { username } = req.user;
-    const {usernameParam} = req.params
+    const { usernameParam } = req.params
 
-    if(username !== usernameParam){
+    if (username !== usernameParam) {
         return res.status(401).send({ status: "Error", message: "No tienes permiso para ver las reservas de este usuario" });
     }
 
     const connection = await database.getConnection();
     let pasajerosList = await connection.query("SELECT * FROM reservas WHERE username = ?", [username]);
-    if(pasajerosList[0].length === 0){
-        return res.status(200).send({ status: "Success", message: "No se ha encontrado este trayecto o todavia no tiene reservas", pasajerosList: pasajerosList[0]});
+    if (pasajerosList[0].length === 0) {
+        return res.status(200).send({ status: "Success", message: "No se ha encontrado este trayecto o todavia no tiene reservas", pasajerosList: pasajerosList[0] });
 
     }
     pasajerosList = pasajerosList[0]
@@ -175,7 +178,7 @@ async function obtenerMisReservas(req, res){
     })
 }
 
-async function deleteReserva(req,res){
+async function deleteReserva(req, res) {
     const { id } = req.params;
     const connection = await database.getConnection();
     let trayecto_id = await connection.query("SELECT id_trayecto FROM reservas WHERE id_reserva = ?", [id]);
