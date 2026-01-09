@@ -26,8 +26,8 @@ app.listen(app.get("port"), () => {
 })
 app.disable("x-powered-by") // Desactiva el encabezado x-powered-by
 let list_origins = [
-    process.env.USUARIOS_URL,
-    process.env.FRONTEND_URL
+    `${process.env.USUARIOS_URL}`,
+    `${process.env.FRONTEND_URL}`
 ]
 //Middewares
 app.use(express.json())
