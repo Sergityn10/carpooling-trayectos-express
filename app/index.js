@@ -18,20 +18,23 @@ await initDatabase();
 startTrayectoStatusScheduler({
     intervalMs: process.env.TRAYECTO_STATUS_SCHEDULER_INTERVAL_MS ? Number(process.env.TRAYECTO_STATUS_SCHEDULER_INTERVAL_MS) : 3000
 })
-
+let port = process.env.PORT || 4001
 //Configuracion del puerto del servidor
-app.set("port",4001)
+app.set("port",port)
 app.listen(app.get("port"), () => {
     console.log("Servidor iniciado en el puerto " + app.get("port"))
 })
 app.disable("x-powered-by") // Desactiva el encabezado x-powered-by
-
+let list_origins = [
+    process.env.USUARIOS_URL,
+    process.env.FRONTEND_URL
+]
 //Middewares
 app.use(express.json())
 app.use(morgan("dev"))
 app.use(cookieParser())
 app.use(cors({
-    origin: "http://localhost:5173",
+    origin: list_origins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
 }))

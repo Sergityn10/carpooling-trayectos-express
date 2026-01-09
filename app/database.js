@@ -5,6 +5,29 @@ dotenv.config();
 const url = process.env.DB_URL || process.env.LIBSQL_URL || 'file:./carpooling.db';
 const authToken = process.env.DB_TOKEN || process.env.LIBSQL_AUTH_TOKEN;
 const client = createClient({ url, authToken });
+let lastTrayectoStatusRefreshMs = 0;
+const TRAYECTO_STATUS_REFRESH_MIN_INTERVAL_MS = 1000;
+
+const shouldRefreshTrayectoStatusBeforeQuery = (sql) => {
+    const s = String(sql ?? '');
+    const firstWord = s.trim().split(/\s+/)[0]?.toUpperCase();
+    if (firstWord !== 'SELECT' && firstWord !== 'WITH') return false;
+    return /\btrayectos\b/i.test(s);
+};
+
+const refreshTrayectoStatusesIfNeeded = async () => {
+    const now = Date.now();
+    if (now - lastTrayectoStatusRefreshMs < TRAYECTO_STATUS_REFRESH_MIN_INTERVAL_MS) return;
+    lastTrayectoStatusRefreshMs = now;
+    try {
+        await client.execute("UPDATE trayectos SET status = 'en curso' WHERE status = 'programado' AND datetime(hora) <= datetime('now')");
+        await client.execute("UPDATE trayectos SET status = 'finalizado' WHERE status = 'en curso' AND datetime(hora, '+10 minutes') <= datetime('now')");
+    } catch (e) {
+        const msg = String(e?.message || '');
+        if (/no such table:\s*trayectos/i.test(msg)) return;
+        throw e;
+    }
+};
 
 const initDatabase = async () => {
     await client.execute('PRAGMA foreign_keys = ON');
