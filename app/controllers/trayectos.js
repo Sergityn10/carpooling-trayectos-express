@@ -21,6 +21,7 @@ async function crearTrayecto(req, res) {
         req.body.conductor = req.user.username
     }
     const validation = TrayectosSchema.validateTrayectoSinId(req.body)
+    
 
     if (!validation.success) {
         return res.status(400).send({ status: "Error", message: JSON.parse(validation.error.message) });
@@ -29,6 +30,7 @@ async function crearTrayecto(req, res) {
 
 
     let { origen, destino, fecha, hora, plazas, conductor, disponible, precio, routeIndex } = validation.data;
+    console.log(`El conductor ${conductor} va a crear un trayecto`)
     if (!disponible) {
         disponible = plazas
     }
@@ -56,6 +58,7 @@ async function crearTrayecto(req, res) {
     } catch (error) {
         switch (error.code) {
             case "ER_NO_REFERENCED_ROW_2":
+                console.log(error)
                 return res.status(400).send({ status: "Error", message: "El conductor no existe" });
             case "ER_DUP_ENTRY":
                 return res.status(400).send({ status: "Error", message: "Ya existe un trayecto con la misma fecha y hora" });
@@ -327,8 +330,8 @@ async function buscarTrayectos(req, res) {
             seats,
         ];
 
-        const [candidateRows] = await connection.query(baseSQL, baseParams);
-
+        const [rows] = await connection.query(baseSQL, baseParams);
+        console.log(rows)
         const haversineKm = (lat1, lon1, lat2, lon2) => {
             const dLat = toRad(lat2 - lat1);
             const dLon = toRad(lon2 - lon1);
@@ -336,12 +339,14 @@ async function buscarTrayectos(req, res) {
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
             return EARTH_RADIUS_KM * c;
         };
-
-        const filtered = candidateRows.filter((t) => {
+        let filtered = [];
+        if(rows.length > 0){
+        filtered = rows.filter((t) => {
             const dOrigin = haversineKm(userOriginCoords.lat, userOriginCoords.lng, t.origen_lat, t.origen_lng);
             const dDest = haversineKm(userDestCoords.lat, userDestCoords.lng, t.destino_lat, t.destino_lng);
             return dOrigin <= SEARCH_DISTANCE_KM && dDest <= SEARCH_DISTANCE_KM;
         });
+        }
 
         const total = filtered.length;
         const totalPages = Math.max(Math.ceil(total / limit), 1);

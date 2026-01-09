@@ -9,10 +9,15 @@ import { ReservaController } from "./controllers/reserva.js"
 import { OpinionsController } from "./controllers/opinions.js"
 import { utilsAuthentication } from "./utils/authentication.js"
 import { UbicacionesController } from "./controllers/ubicaciones.js";
+import { startTrayectoStatusScheduler } from "./utils/trayecto-status-scheduler.js";
 
 const app = express()
 
 await initDatabase();
+
+startTrayectoStatusScheduler({
+    intervalMs: process.env.TRAYECTO_STATUS_SCHEDULER_INTERVAL_MS ? Number(process.env.TRAYECTO_STATUS_SCHEDULER_INTERVAL_MS) : 3000
+})
 
 //Configuracion del puerto del servidor
 app.set("port",4001)
@@ -30,6 +35,7 @@ app.use(cors({
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
 }))
+
 
 
 

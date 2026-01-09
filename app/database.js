@@ -9,29 +9,46 @@ const client = createClient({ url, authToken });
 const initDatabase = async () => {
     await client.execute('PRAGMA foreign_keys = ON');
     const statements = [
-        `CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            img_perfil TEXT,
-            name TEXT,
-            nombre TEXT
-        )`,
         `CREATE TABLE IF NOT EXISTS trayectos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            origen TEXT NOT NULL,
-            destino TEXT NOT NULL,
-            hora TEXT NOT NULL,
-            plazas INTEGER NOT NULL,
-            conductor TEXT NOT NULL,
-            disponible INTEGER NOT NULL,
-            precio REAL NOT NULL,
-            origen_lat REAL,
-            origen_lng REAL,
-            destino_lat REAL,
-            destino_lng REAL,
-            routeIndex INTEGER,
-            FOREIGN KEY (conductor) REFERENCES users(username),
-            UNIQUE(conductor, hora)
-        )`,
+    -- 1. Clave primaria SERIAL se convierte a INTEGER PRIMARY KEY AUTOINCREMENT
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    
+    -- 2. Cadenas de texto
+    origen TEXT NOT NULL,
+    destino TEXT NOT NULL,
+    
+    -- 3. TIMESTAMP se convierte a TEXT (formato ISO 8601) o INTEGER (UNIX Epoch)
+    hora TEXT NOT NULL,
+    
+    -- 4. Tipos INTEGER
+    plazas INTEGER NOT NULL,
+    disponible INTEGER NOT NULL,
+    
+    -- 5. Tipos numéricos para precios y coordenadas
+    precio REAL NOT NULL,
+    conductor TEXT NOT NULL,
+    routeIndex INTEGER NULL DEFAULT 0,
+    
+    -- 6. ENUM simulado con TEXT y DEFAULT
+    status TEXT NOT NULL DEFAULT 'programado',
+    
+    -- 7. DECIMAL se convierte a REAL
+    origen_lat REAL NULL,
+    origen_lng REAL NULL,
+    destino_lat REAL NULL,
+    destino_lng REAL NULL,
+    
+    -- 8. Clave Foránea
+    FOREIGN KEY (conductor) REFERENCES users(username),
+    
+    -- 9. Restricción CHECK
+    CONSTRAINT chk_plazas CHECK (plazas >= 1 AND plazas <= 4),
+    
+    -- 10. Restricción CHECK para simular el ENUM 'status'
+    CONSTRAINT chk_trayecto_status CHECK (
+        status IN ('en curso', 'programado', 'finalizado', 'cancelado')
+    )
+);`,
         `CREATE TABLE IF NOT EXISTS reservas (
             id_reserva INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
@@ -102,7 +119,9 @@ const getConnection = async () => {
                     });
                 };
                 const plainRows = toPlain(rs);
-                if (plainRows.length > 0) {
+                const firstWord = String(sql ?? '').trim().split(/\s+/)[0]?.toUpperCase();
+                const isRowReturning = firstWord === 'SELECT' || firstWord === 'WITH' || firstWord === 'PRAGMA';
+                if (plainRows.length > 0 || isRowReturning) {
                     return [plainRows];
                 }
                 const header = {

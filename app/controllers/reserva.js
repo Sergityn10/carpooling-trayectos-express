@@ -131,10 +131,11 @@ async function getReservasByTravelId(req, res) {
         return res.status(404).send({ status: "Error", message: "No se ha encontrado este trayecto" });
     }
     let pasajerosList = await connection.query("SELECT * FROM reservas WHERE id_trayecto = ?", [travelId]);
+    console.log(pasajerosList)
     pasajerosList = pasajerosList[0]
     //Agregar info adicional como la img_perfil y el nombre
-    if (pasajerosList.length === 0) {
-        return res.status(200).send({ status: "Success", message: "No se ha encontrado este trayecto o todavia no tiene reservas", pasajerosList: pasajerosList[0] });
+    if (pasajerosList.length === 0 || pasajerosList.affectedRows === 0) {
+        return res.status(200).send({ status: "Success", message: "No se ha encontrado este trayecto o todavia no tiene reservas", pasajerosList:[] });
     }
     pasajerosList = await Promise.all(pasajerosList.map(async pasajero => {
         const img_perfil = await connection.query("SELECT img_perfil, name FROM users WHERE username = ?", [pasajero.username]);
