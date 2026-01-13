@@ -1,5 +1,6 @@
 import { database } from "../database.js";
 import { GoogleMapsProvider } from "../providers/google-maps.js";
+import { OilPriceProvider } from "../providers/precio-oil.js";
 import { TrayectosSchema } from "../schemas/trayecto.js";
 import { DateUtils } from "../utils/date.js";
 const SEARCH_DISTANCE_KM = 0.2; // 200 metros = 0.2 km
@@ -48,12 +49,26 @@ async function crearTrayecto(req, res) {
     // Inserta el trayecto en la base de datos
     let result = null
 
-    const originCoords = await GoogleMapsProvider.geocodeAddress(origen);
-    const destinationCoords = await GoogleMapsProvider.geocodeAddress(destino);
+    const originDetails = await GoogleMapsProvider.geocodeAddressDetails(origen);
+    const destinationDetails = await GoogleMapsProvider.geocodeAddressDetails(destino);
+
+    const provinceForPricing = originDetails.province || destinationDetails.province;
+    if (!provinceForPricing) {
+        return res.status(400).send({ status: "Error", message: "No se pudo determinar la provincia para calcular el precio" });
+    }
+
+    try {
+        const gasoilPrice = await OilPriceProvider.getGasoilAveragePriceByProvinciaNombre(provinceForPricing);
+        precio = Math.ceil(gasoilPrice);
+    } catch (error) {
+        console.error("Error al calcular el precio por provincia:", error);
+        return res.status(502).send({ status: "Error", message: "No se pudo calcular el precio del gasoil para el trayecto" });
+    }
+
     try {
         [result] = await connection.query(
             "INSERT INTO trayectos (origen, destino, hora, plazas, conductor, disponible, precio, origen_lat, origen_lng, destino_lat, destino_lng, routeIndex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [origen, destino, fechaHoraSQL, plazas, conductor, disponible, precio, originCoords.lat, originCoords.lng, destinationCoords.lat, destinationCoords.lng, routeIndex]
+            [origen, destino, fechaHoraSQL, plazas, conductor, disponible, precio, originDetails.lat, originDetails.lng, destinationDetails.lat, destinationDetails.lng, routeIndex]
         );
     } catch (error) {
         switch (error.code) {
@@ -70,7 +85,7 @@ async function crearTrayecto(req, res) {
     if (!insertedId) {
         return res.status(500).send({ status: "Error", message: "Error al crear el trayecto" });
     }
-    const newTrayecto = { id: insertedId, origen, destino, fecha, hora, plazas, conductor, disponible };
+    const newTrayecto = { id: insertedId, origen, destino, fecha, hora, plazas, conductor, disponible, precio };
 
     return res.status(201).send({
         status: "Success",

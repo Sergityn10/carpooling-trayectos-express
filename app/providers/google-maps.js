@@ -3,7 +3,8 @@ dotenv.config();
 // Asegúrate de que esta URL base esté disponible (debe ser importada o definida)
 const GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json?address=";
 const API_KEY = process.env.GOOGLE_MAPS_API_KEY; // Usar tu clave de entorno
-async function geocodeAddress(address) {
+
+async function geocodeRaw(address) {
     const response = await fetch(`${GEOCODE_URL}${encodeURIComponent(address)}&key=${API_KEY}`);
     const data = await response.json();
 
@@ -11,10 +12,63 @@ async function geocodeAddress(address) {
         throw new Error(`No se pudo geocodificar la dirección: ${address}`);
     }
 
-    const { lat, lng } = data.results[0].geometry.location;
+    return data.results[0];
+}
+
+function getAddressComponent(components, type) {
+    const found = (components ?? []).find((c) => (c.types ?? []).includes(type));
+    return found?.long_name ?? null;
+}
+
+function extractCityFromGeocodeResult(result) {
+    const components = result?.address_components ?? [];
+    return (
+        getAddressComponent(components, 'locality') ||
+        getAddressComponent(components, 'postal_town') ||
+        getAddressComponent(components, 'administrative_area_level_3') ||
+        getAddressComponent(components, 'administrative_area_level_2')
+    );
+}
+
+function extractProvinceFromGeocodeResult(result) {
+    const components = result?.address_components ?? [];
+    return (
+        getAddressComponent(components, 'administrative_area_level_2') ||
+        getAddressComponent(components, 'administrative_area_level_1')
+    );
+}
+
+async function geocodeAddress(address) {
+    const result = await geocodeRaw(address);
+    const { lat, lng } = result.geometry.location;
     return { lat, lng };
 }
 
+async function getCityFromAddress(address) {
+    const result = await geocodeRaw(address);
+    const city = extractCityFromGeocodeResult(result);
+    if (!city) throw new Error(`No se pudo extraer la ciudad/municipio de la dirección: ${address}`);
+    return city;
+}
+
+async function getProvinceFromAddress(address) {
+    const result = await geocodeRaw(address);
+    const province = extractProvinceFromGeocodeResult(result);
+    if (!province) throw new Error(`No se pudo extraer la provincia de la dirección: ${address}`);
+    return province;
+}
+
+async function geocodeAddressDetails(address) {
+    const result = await geocodeRaw(address);
+    const { lat, lng } = result.geometry.location;
+    const city = extractCityFromGeocodeResult(result);
+    const province = extractProvinceFromGeocodeResult(result);
+    return { lat, lng, city, province };
+}
+
 export const GoogleMapsProvider = {
-    geocodeAddress
+    geocodeAddress,
+    geocodeAddressDetails,
+    getCityFromAddress,
+    getProvinceFromAddress
 }
