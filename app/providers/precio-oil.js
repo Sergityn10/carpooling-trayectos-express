@@ -1,5 +1,8 @@
 import dotenv from 'dotenv';
-import provinces from './provincias.json' assert { type: 'json' };
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const provinces = require('./provincias.json');
 
 dotenv.config();
 
