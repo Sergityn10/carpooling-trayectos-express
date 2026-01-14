@@ -10,7 +10,7 @@ async function crearTrayecto(req, res) {
 
     //Se valida si exite la propiedad fecha
     let date = null
-    console.log("Entro en la funcion")
+
     try {
         date = new Date(req.body.fecha);
         if (isNaN(date.getTime())) {
