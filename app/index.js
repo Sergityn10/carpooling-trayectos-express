@@ -156,6 +156,7 @@ app.delete("/api/ubicacion/:id", utilsAuthentication.authenticate, async (req, r
 
 //OIL-PRICING Y GASOLINERAS
 
+
 // Obtiene el listado de provincias disponible en la API de precios de combustible.
 app.get("/api/oil/provincias", async (req, res) => {
   try {
