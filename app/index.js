@@ -10,6 +10,7 @@ import { OpinionsController } from "./controllers/opinions.js"
 import { utilsAuthentication } from "./utils/authentication.js"
 import { UbicacionesController } from "./controllers/ubicaciones.js";
 import { startTrayectoStatusScheduler } from "./utils/trayecto-status-scheduler.js";
+import { OilPriceProvider } from "./providers/precio-oil.js";
 
 const app = express()
 
@@ -27,7 +28,8 @@ app.listen(app.get("port"), () => {
 app.disable("x-powered-by") // Desactiva el encabezado x-powered-by
 let list_origins = [
     `${process.env.USUARIOS_URL}`,
-    `${process.env.FRONTEND_URL}`
+    `${process.env.FRONTEND_URL}`,
+    'http://localhost:5173'
 ]
 //Middewares
 app.use(express.json())
@@ -125,8 +127,6 @@ app.delete("/api/reserva/:id", async (req, res) => {
     ReservaController.deleteReserva(req, res);
 });
 
-//UBICACIONES
-
 // UBICACIONES
 app.post("/api/ubicacion", utilsAuthentication.authenticate, async (req, res) => {
   UbicacionesController.crearUbicacion(req, res);
@@ -152,3 +152,189 @@ app.put("/api/ubicacion/:id", utilsAuthentication.authenticate, async (req, res)
 app.delete("/api/ubicacion/:id", utilsAuthentication.authenticate, async (req, res) => {
   UbicacionesController.eliminarUbicacion(req, res);
 });
+
+
+//OIL-PRICING Y GASOLINERAS
+
+// Obtiene el listado de provincias disponible en la API de precios de combustible.
+app.get("/api/oil/provincias", async (req, res) => {
+  try {
+    const data = await OilPriceProvider.getProvincias();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando provincias" });
+  }
+});
+
+// Obtiene el listado de municipios de una provincia (requiere :idProvincia).
+app.get("/api/oil/provincias/:idProvincia/municipios", async (req, res) => {
+  try {
+    const { idProvincia } = req.params;
+    if (!idProvincia) return res.status(400).json({ message: "idProvincia requerido" });
+    const data = await OilPriceProvider.getMunicipiosByProvincia(idProvincia);
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando municipios" });
+  }
+});
+
+// Obtiene las estaciones de servicio de un municipio (requiere :idMunicipio).
+app.get("/api/oil/estaciones/municipio/:idMunicipio", async (req, res) => {
+  try {
+    const { idMunicipio } = req.params;
+    if (!idMunicipio) return res.status(400).json({ message: "idMunicipio requerido" });
+    const data = await OilPriceProvider.getEstacionesByMunicipio(idMunicipio);
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando estaciones por municipio" });
+  }
+});
+
+// Busca estaciones por radio desde una coordenada (query: latitud,longitud,radio,pagina,limite).
+app.get("/api/oil/estaciones/radio", async (req, res) => {
+  try {
+    const { latitud, longitud, radio, pagina, limite } = req.query;
+    if (latitud === undefined || longitud === undefined) {
+      return res.status(400).json({ message: "latitud y longitud son requeridos" });
+    }
+    const data = await OilPriceProvider.getEstacionesRadio({
+      latitud: Number(latitud),
+      longitud: Number(longitud),
+      radio: radio === undefined ? undefined : Number(radio),
+      pagina: pagina === undefined ? undefined : Number(pagina),
+      limite: limite === undefined ? undefined : Number(limite)
+    });
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando estaciones por radio" });
+  }
+});
+
+// Devuelve los detalles de una estación de servicio por id (requiere :idEstacion).
+app.get("/api/oil/estaciones/:idEstacion/detalles", async (req, res) => {
+  try {
+    const { idEstacion } = req.params;
+    if (!idEstacion) return res.status(400).json({ message: "idEstacion requerido" });
+    const data = await OilPriceProvider.getEstacionDetalles(idEstacion);
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando detalles de estación" });
+  }
+});
+
+// Devuelve estaciones cercanas a una estación concreta (requiere :idEstacion, query: radio opcional).
+app.get("/api/oil/estaciones/:idEstacion/cerca", async (req, res) => {
+  try {
+    const { idEstacion } = req.params;
+    const { radio } = req.query;
+    if (!idEstacion) return res.status(400).json({ message: "idEstacion requerido" });
+    const data = await OilPriceProvider.getEstacionesCerca(idEstacion, {
+      radio: radio === undefined ? undefined : Number(radio)
+    });
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando estaciones cercanas" });
+  }
+});
+
+// Devuelve el histórico de precios de una estación (requiere :idEstacion, query: fechaInicio/fechaFin opcionales).
+app.get("/api/oil/estaciones/:idEstacion/historico", async (req, res) => {
+  try {
+    const { idEstacion } = req.params;
+    const { fechaInicio, fechaFin } = req.query;
+    if (!idEstacion) return res.status(400).json({ message: "idEstacion requerido" });
+    const data = await OilPriceProvider.getEstacionHistorico(idEstacion, { fechaInicio, fechaFin });
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando histórico de estación" });
+  }
+});
+
+// Devuelve el precio medio diario (query: idFuelType, fechaInicio, fechaFin).
+app.get("/api/oil/precio-medio-diario", async (req, res) => {
+  try {
+    const { idFuelType, fechaInicio, fechaFin } = req.query;
+    const data = await OilPriceProvider.getPrecioMedioDiario({
+      idFuelType: idFuelType === undefined ? undefined : Number(idFuelType),
+      fechaInicio,
+      fechaFin
+    });
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando precio medio diario" });
+  }
+});
+
+// Devuelve precios medios por provincia usando su id (requiere :idProvincia, query: idFuelType opcional).
+app.get("/api/oil/precios/medios/provincia/:idProvincia", async (req, res) => {
+  try {
+    const { idProvincia } = req.params;
+    const { idFuelType } = req.query;
+    if (!idProvincia) return res.status(400).json({ message: "idProvincia requerido" });
+    const data = await OilPriceProvider.getPreciosMediosByProvinciaId(
+      idProvincia,
+      idFuelType === undefined ? undefined : Number(idFuelType)
+    );
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando precios medios por provincia" });
+  }
+});
+
+// Devuelve precios medios por provincia usando su nombre (requiere :provincia, query: idFuelType opcional).
+app.get("/api/oil/precios/medios/provincia-nombre/:provincia", async (req, res) => {
+  try {
+    const { provincia } = req.params;
+    const { idFuelType } = req.query;
+    if (!provincia) return res.status(400).json({ message: "provincia requerida" });
+    const data = await OilPriceProvider.getPreciosMediosByProvinciaNombre(
+      provincia,
+      idFuelType === undefined ? undefined : Number(idFuelType)
+    );
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando precios medios por provincia" });
+  }
+});
+
+// Devuelve el precio medio de gasoil para una provincia por id (requiere :idProvincia).
+app.get("/api/oil/precios/gasoil/provincia/:idProvincia", async (req, res) => {
+  try {
+    const { idProvincia } = req.params;
+    if (!idProvincia) return res.status(400).json({ message: "idProvincia requerido" });
+    const averagePrice = await OilPriceProvider.getGasoilAveragePriceByProvinciaId(idProvincia);
+    return res.json({ idProvincia, averagePrice });
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando precio medio de gasoil" });
+  }
+});
+
+// Devuelve el precio medio de gasoil para una provincia por nombre (requiere :provincia).
+app.get("/api/oil/precios/gasoil/provincia-nombre/:provincia", async (req, res) => {
+  try {
+    const { provincia } = req.params;
+    if (!provincia) return res.status(400).json({ message: "provincia requerida" });
+    const averagePrice = await OilPriceProvider.getGasoilAveragePriceByProvinciaNombre(provincia);
+    return res.json({ provincia, averagePrice });
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando precio medio de gasoil" });
+  }
+});
+
+// Devuelve precios para una provincia por nombre (requiere :provincia, query: idFuelType opcional).
+app.get("/api/oil/precios/provincia/:provincia", async (req, res) => {
+  try {
+    const { provincia } = req.params;
+    const { idFuelType } = req.query;
+    if (!provincia) return res.status(400).json({ message: "provincia requerida" });
+    const data = await OilPriceProvider.getPriceInProvince(
+      provincia,
+      idFuelType === undefined ? undefined : Number(idFuelType)
+    );
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error?.message ?? "Error consultando precios por provincia" });
+  }
+});
+
+

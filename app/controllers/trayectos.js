@@ -10,6 +10,7 @@ async function crearTrayecto(req, res) {
 
     //Se valida si exite la propiedad fecha
     let date = null
+    console.log("Entro en la funcion")
     try {
         date = new Date(req.body.fecha);
         if (isNaN(date.getTime())) {
@@ -53,6 +54,7 @@ async function crearTrayecto(req, res) {
     const destinationDetails = await GoogleMapsProvider.geocodeAddressDetails(destino);
 
     const provinceForPricing = originDetails.province || destinationDetails.province;
+    console.log("ProvinceForPricing",provinceForPricing)
     if (!provinceForPricing) {
         return res.status(400).send({ status: "Error", message: "No se pudo determinar la provincia para calcular el precio" });
     }

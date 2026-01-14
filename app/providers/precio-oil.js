@@ -137,6 +137,9 @@ function pickGasoilItem(items) {
 async function getGasoilAveragePriceByProvinciaId(idProvincia) {
     const items = await getPreciosMediosByProvinciaId(idProvincia);
     const item = pickGasoilItem(items);
+    console.log(item)
+    item.averagePrice = parseFloat(item.averagePrice);
+    console.log(item.averagePrice)
     if (!item || typeof item.averagePrice !== 'number') {
         throw new Error(`No se pudo obtener el precio medio de gasoil para la provincia ${idProvincia}`);
     }
