@@ -76,8 +76,7 @@ const initDatabase = async () => {
             id_reserva INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
             id_trayecto INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            stripe_checkout_session_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
             FOREIGN KEY (username) REFERENCES users(username),
             FOREIGN KEY (id_trayecto) REFERENCES trayectos(id),
             UNIQUE(username, id_trayecto)

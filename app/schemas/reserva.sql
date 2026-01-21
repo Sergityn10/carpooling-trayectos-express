@@ -23,10 +23,10 @@ CREATE TABLE reservas (
     -- 4. Tipo ENUM sustituido por TEXT y restricción CHECK
     status TEXT NOT NULL DEFAULT 'pending',
     
-    -- 5. Campos de Stripe como TEXT
-    stripe_checkout_session_id TEXT DEFAULT NULL,
-    stripe_payment_intent_id TEXT DEFAULT NULL,
-    stripe_payment_intent_status TEXT DEFAULT NULL,
+    -- -- 5. Campos de Stripe como TEXT
+    -- stripe_checkout_session_id TEXT DEFAULT NULL,
+    -- stripe_payment_intent_id TEXT DEFAULT NULL,
+    -- stripe_payment_intent_status TEXT DEFAULT NULL,
     
     -- 6. Claves foráneas
     FOREIGN KEY (id_trayecto) REFERENCES trayectos(id),
@@ -34,6 +34,7 @@ CREATE TABLE reservas (
     
     -- 7. Restricción UNIQUE
     UNIQUE (id_trayecto, username),
+    .
 
     -- Restricción CHECK para simular el ENUM
     CONSTRAINT chk_reserva_status CHECK (
