@@ -113,6 +113,14 @@ const initDatabase = async () => {
             stripe_account_id TEXT,
             FOREIGN KEY(username) REFERENCES users(username)
         )`,
+        `CREATE TRIGGER IF NOT EXISTS trg_reservas_after_delete_completed
+            AFTER DELETE ON reservas
+            WHEN OLD.status = 'completed'
+        BEGIN
+            UPDATE trayectos
+            SET disponible = disponible + 1
+            WHERE id = OLD.id_trayecto;
+        END;`,
         `CREATE INDEX IF NOT EXISTS idx_trayectos_origen ON trayectos(origen_lat, origen_lng)`,
         `CREATE INDEX IF NOT EXISTS idx_trayectos_destino ON trayectos(destino_lat, destino_lng)`,
         `CREATE INDEX IF NOT EXISTS idx_trayectos_hora ON trayectos(hora)`,

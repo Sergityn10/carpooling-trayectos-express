@@ -188,14 +188,6 @@ async function obtenerMisReservas(req, res) {
 async function deleteReserva(req, res) {
     const { id } = req.params;
     const connection = await database.getConnection();
-    let trayecto_id = await connection.query("SELECT id_trayecto FROM reservas WHERE id_reserva = ?", [id]);
-    if (trayecto_id[0].length === 0) {
-        return res.status(404).send({ status: "Error", message: "Reserva no encontrada" });
-    }
-    trayecto_id = trayecto_id[0][0].id_trayecto;
-    console.log("Trayecto ID de la reserva a eliminar:", trayecto_id);
-
-    const [result_updated_trayecto] = await connection.query("UPDATE trayectos SET disponible = disponible + 1 WHERE id = ?", [trayecto_id]);
     const [result] = await connection.query("DELETE FROM reservas WHERE id_reserva = ?", [id]);
     if (result.affectedRows === 0) {
         return res.status(404).send({ status: "Error", message: "Reserva no encontrada" });
