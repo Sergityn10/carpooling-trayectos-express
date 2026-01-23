@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import Stripe from "stripe";
 dotenv.config();
 const USUARIOS_URL = process.env.USUARIOS_URL;
-
+let frontend_url = process.env.FRONTEND_URL 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 async function addReserva(req, res) {
     const validation = ReservaSchema.validateReservaSinId(req.body);
@@ -36,44 +36,12 @@ async function addReserva(req, res) {
     user = user[0][0]
 
     const cookieHeaderValue = `access_token=${token}`; // El formato debe ser 'nombre=valor'
-
-    let totalAmount = trayecto.precio * 100;
-    console.log("Se realiza la peticion del checkout")
-    let checkout_session = await fetch(`${USUARIOS_URL}/api/payment/payment-intent/checkout`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            'Cookie': cookieHeaderValue
-        },
-        body: JSON.stringify({
-            amount: totalAmount,
-            destination: stripe_account,
-            currency: "eur",
-            description: "Reserva de trayecto: " + trayecto_id + " desde " + trayecto.origen + " hasta " + trayecto.destino,
-            success_url: "http://localhost:5173/trayecto/" + trayecto_id,
-            cancel_url: "http://localhost:5173/trayecto/" + trayecto_id,
-        }),
-    }).then(async response => {
-        if (!response.ok) {
-            throw new Error(`${response.message}`);
-        }
-
-        return await response.json();
-    })
-
-    console.log(checkout_session)
-    checkout_session = checkout_session.checkout_session
-
     let reserva = {
         username,
         trayecto_id,
-        status,
-        stripe_checkout_session_id: checkout_session.id,
+        status: 'pending'
 
     }
-
-    let stripe_payment_intent_id = checkout_session.payment_intent;
-    let stripe_payment_intent_status = checkout_session.payment_status;
     let disponible = trayecto.disponible;
     console.log("Disponibilidad del trayecto:", disponible);
     // Si no hay disponibilidad, devolver un error
@@ -85,34 +53,72 @@ async function addReserva(req, res) {
 
     // Inserta la reserva en la base de datos
     let result = null;
+    let duplicado = false
     try {
 
         [result] = await connection.query(
-            "INSERT INTO reservas (username, id_trayecto, status, stripe_checkout_session_id) VALUES (?, ?, ?, ?)",
-            [username, trayecto_id, status, reserva.stripe_checkout_session_id]
+            "INSERT INTO reservas (username, id_trayecto, status) VALUES (?, ?, ?)",
+            [username, trayecto_id, reserva.status]
         );
     }
     catch (error) {
         switch (error.code) {
             case 'ER_NO_REFERENCED_ROW_2':
                 return res.status(400).send({ status: "Error", message: "El usuario o trayecto no existen" });
-
+                break;
             case 'ER_DUP_ENTRY':
-                return res.status(400).send({ status: "Error", message: "El usuario ya tiene una reserva para este trayecto" });
+                duplicado =true
+                // return res.status(400).send({ status: "Error", message: "El usuario ya tiene una reserva para este trayecto" });
+                reserva = await connection.query("SELECT * FROM reservas WHERE username = ? AND id_trayecto = ?", [username, trayecto_id]);
+                if(reserva[0][0].status === 'completed'){
+                    return res.status(400).send({ status: "Error", message: "El usuario ya tiene una reserva para este trayecto" });
+                }
+                reserva = reserva[0][0]
+                console.log(reserva)
+                break;
             default:
                 return res.status(500).send({ status: "Error", message: "Error al crear la reserva" });
+                break;
         }
     }
 
-    if (result.affectedRows === 0) {
-        return res.status(500).send({ status: "Error", message: "No se pudo crear la reserva" });
-    }
-    const [result_updated_trayecto] = await connection.query("UPDATE trayectos SET disponible = disponible - 1 WHERE id = ?", [trayecto_id]);
-    if (result_updated_trayecto.affectedRows === 0) {
-        return res.status(500).send({ status: "Error", message: "No se pudo actualizar la disponibilidad del trayecto" });
-    }
-    const newReserva = { id: result.insertId, username, trayecto_id, stripe_checkout_session_id: checkout_session.id };
+        let totalAmount = trayecto.precio * 100;
+    console.log("Se realiza la peticion del checkout")
+    let checkout_session
+    try{
 
+    checkout_session = await fetch(`${USUARIOS_URL}/api/payment/payment-intent/checkout`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            'Cookie': cookieHeaderValue,
+            'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+            amount: totalAmount,
+            destination: stripe_account,
+            currency: "eur",
+            description: "Reserva de trayecto: " + trayecto_id + " desde " + trayecto.origen + " hasta " + trayecto.destino,
+            success_url: frontend_url + 'trayecto/' + trayecto_id,
+            cancel_url: frontend_url + 'trayecto/' + trayecto_id,
+            trayecto_id,
+            id_reserva:duplicado?reserva.id_reserva:result.insertId
+        }),
+    }).then(async response => {
+        if (!response.ok) {
+            throw new Error("Error al crear el PaymentIntent en Stripe");
+        }
+        return await response.json();
+    })
+    }
+    catch(error){
+        return res.status(400).send({
+            status: "Error",
+            message: error.message
+        })
+    }
+    const newReserva = { id: duplicado?reserva.id_reserva:result.insertId, username, trayecto_id, stripe_checkout_session_id: checkout_session.id };
+    console.log(checkout_session.url)
     return res.status(201).send({
         status: "Success",
         message: "Reserva creada correctamente",
@@ -182,14 +188,6 @@ async function obtenerMisReservas(req, res) {
 async function deleteReserva(req, res) {
     const { id } = req.params;
     const connection = await database.getConnection();
-    let trayecto_id = await connection.query("SELECT id_trayecto FROM reservas WHERE id_reserva = ?", [id]);
-    if (trayecto_id[0].length === 0) {
-        return res.status(404).send({ status: "Error", message: "Reserva no encontrada" });
-    }
-    trayecto_id = trayecto_id[0][0].id_trayecto;
-    console.log("Trayecto ID de la reserva a eliminar:", trayecto_id);
-
-    const [result_updated_trayecto] = await connection.query("UPDATE trayectos SET disponible = disponible + 1 WHERE id = ?", [trayecto_id]);
     const [result] = await connection.query("DELETE FROM reservas WHERE id_reserva = ?", [id]);
     if (result.affectedRows === 0) {
         return res.status(404).send({ status: "Error", message: "Reserva no encontrada" });

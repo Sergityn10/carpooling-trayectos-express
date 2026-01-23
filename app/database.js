@@ -72,12 +72,12 @@ const initDatabase = async () => {
         status IN ('en curso', 'programado', 'finalizado', 'cancelado')
     )
 );`,
+        `ALTER TABLE trayectos ADD COLUMN notified_15min INTEGER NOT NULL DEFAULT 0`,
         `CREATE TABLE IF NOT EXISTS reservas (
             id_reserva INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
             id_trayecto INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            stripe_checkout_session_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
             FOREIGN KEY (username) REFERENCES users(username),
             FOREIGN KEY (id_trayecto) REFERENCES trayectos(id),
             UNIQUE(username, id_trayecto)
@@ -114,13 +114,27 @@ const initDatabase = async () => {
             stripe_account_id TEXT,
             FOREIGN KEY(username) REFERENCES users(username)
         )`,
+        `CREATE TRIGGER IF NOT EXISTS trg_reservas_after_delete_completed
+            AFTER DELETE ON reservas
+            WHEN OLD.status = 'completed'
+        BEGIN
+            UPDATE trayectos
+            SET disponible = disponible + 1
+            WHERE id = OLD.id_trayecto;
+        END;`,
         `CREATE INDEX IF NOT EXISTS idx_trayectos_origen ON trayectos(origen_lat, origen_lng)`,
         `CREATE INDEX IF NOT EXISTS idx_trayectos_destino ON trayectos(destino_lat, destino_lng)`,
         `CREATE INDEX IF NOT EXISTS idx_trayectos_hora ON trayectos(hora)`,
         `CREATE INDEX IF NOT EXISTS idx_reservas_trayecto ON reservas(id_trayecto)`
     ];
     for (const sql of statements) {
-        await client.execute(sql);
+        try {
+            await client.execute(sql);
+        } catch (e) {
+            const msg = String(e?.message || "");
+            if (/duplicate column name/i.test(msg)) continue;
+            throw e;
+        }
     }
 };
 

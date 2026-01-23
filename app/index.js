@@ -9,15 +9,19 @@ import { ReservaController } from "./controllers/reserva.js"
 import { OpinionsController } from "./controllers/opinions.js"
 import { utilsAuthentication } from "./utils/authentication.js"
 import { UbicacionesController } from "./controllers/ubicaciones.js";
-import { startTrayectoStatusScheduler } from "./utils/trayecto-status-scheduler.js";
+import { startTrayectoSoonReminderCron, startTrayectoStatusCron } from "./cron-jobs.js";
 import { OilPriceProvider } from "./providers/precio-oil.js";
 
 const app = express()
 
 await initDatabase();
 
-startTrayectoStatusScheduler({
-    intervalMs: process.env.TRAYECTO_STATUS_SCHEDULER_INTERVAL_MS ? Number(process.env.TRAYECTO_STATUS_SCHEDULER_INTERVAL_MS) : 3000
+startTrayectoStatusCron({
+    schedule: process.env.TRAYECTO_STATUS_CRON_SCHEDULE || "*/1 * * * *"
+})
+
+startTrayectoSoonReminderCron({
+    schedule: process.env.TRAYECTO_SOON_REMINDER_CRON_SCHEDULE || "*/1 * * * *"
 })
 let port = process.env.PORT || 4001
 //Configuracion del puerto del servidor
