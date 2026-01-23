@@ -9,15 +9,23 @@ function buildTransporter() {
   if (!host || !port || !user || !pass) return null;
 
   return nodemailer.createTransport({
-    host,
-    port,
+    service: 'gmail',
     secure: port === 465,
     auth: { user, pass }
   });
 }
 
 export async function sendEmail({ to, subject, text }) {
-  const transporter = buildTransporter();
+  let transporter
+  try{
+
+   transporter = buildTransporter();
+  }
+  catch (error){
+    console.error("Error al enviar email:", error);
+    return { skipped: true };
+    return 
+  }
   if (!transporter) {
     console.warn("SMTP no configurado; se omite el envío de email");
     return { skipped: true };
@@ -41,5 +49,10 @@ export async function sendEmail({ to, subject, text }) {
 export async function sendTrayectoEnCursoEmail({ to, trayecto }) {
   const subject = "Tu trayecto ha comenzado";
   const text = `El trayecto #${trayecto.id} de ${trayecto.origen} a ${trayecto.destino} está en curso.`;
+  return sendEmail({ to, subject, text });
+}
+export async function sendTrayectoAPuntoDeComenzar({ to, trayecto }) {
+  const subject = "Tu trayecto va a empezar pronto";
+  const text = `Tu trayecto #${trayecto.id} de ${trayecto.origen} a ${trayecto.destino} empieza en menos de 15 minutos.`;
   return sendEmail({ to, subject, text });
 }

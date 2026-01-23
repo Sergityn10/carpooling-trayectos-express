@@ -72,6 +72,7 @@ const initDatabase = async () => {
         status IN ('en curso', 'programado', 'finalizado', 'cancelado')
     )
 );`,
+        `ALTER TABLE trayectos ADD COLUMN notified_15min INTEGER NOT NULL DEFAULT 0`,
         `CREATE TABLE IF NOT EXISTS reservas (
             id_reserva INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
@@ -127,7 +128,13 @@ const initDatabase = async () => {
         `CREATE INDEX IF NOT EXISTS idx_reservas_trayecto ON reservas(id_trayecto)`
     ];
     for (const sql of statements) {
-        await client.execute(sql);
+        try {
+            await client.execute(sql);
+        } catch (e) {
+            const msg = String(e?.message || "");
+            if (/duplicate column name/i.test(msg)) continue;
+            throw e;
+        }
     }
 };
 
