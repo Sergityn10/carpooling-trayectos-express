@@ -1,15 +1,26 @@
 import nodemailer from "nodemailer";
 
 function buildTransporter() {
+  const service = process.env.SMTP_SERVICE;
   const host = process.env.SMTP_HOST;
   const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
 
-  if (!host || !port || !user || !pass) return null;
+  if (!user || !pass) return null;
+  if (!service && (!host || !port)) return null;
+
+  if (service) {
+    return nodemailer.createTransport({
+      service,
+      secure: port === 465,
+      auth: { user, pass }
+    });
+  }
 
   return nodemailer.createTransport({
-    service: 'gmail',
+    host,
+    port,
     secure: port === 465,
     auth: { user, pass }
   });
@@ -36,14 +47,18 @@ export async function sendEmail({ to, subject, text }) {
     throw new Error("SMTP_FROM o SMTP_USER requerido para enviar emails");
   }
 
-  const info = await transporter.sendMail({
-    from,
-    to,
-    subject,
-    text
-  });
-
-  return { skipped: false, messageId: info?.messageId };
+  try {
+    const info = await transporter.sendMail({
+      from,
+      to,
+      subject,
+      text
+    });
+    return { skipped: false, messageId: info?.messageId };
+  } catch (error) {
+    console.error("Error al enviar email:", error);
+    return { skipped: true };
+  }
 }
 
 export async function sendTrayectoEnCursoEmail({ to, trayecto }) {
