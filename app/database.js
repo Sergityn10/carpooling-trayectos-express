@@ -8,26 +8,7 @@ const client = createClient({ url, authToken });
 let lastTrayectoStatusRefreshMs = 0;
 const TRAYECTO_STATUS_REFRESH_MIN_INTERVAL_MS = 1000;
 
-const shouldRefreshTrayectoStatusBeforeQuery = (sql) => {
-    const s = String(sql ?? '');
-    const firstWord = s.trim().split(/\s+/)[0]?.toUpperCase();
-    if (firstWord !== 'SELECT' && firstWord !== 'WITH') return false;
-    return /\btrayectos\b/i.test(s);
-};
 
-const refreshTrayectoStatusesIfNeeded = async () => {
-    const now = Date.now();
-    if (now - lastTrayectoStatusRefreshMs < TRAYECTO_STATUS_REFRESH_MIN_INTERVAL_MS) return;
-    lastTrayectoStatusRefreshMs = now;
-    try {
-        await client.execute("UPDATE trayectos SET status = 'en curso' WHERE status = 'programado' AND datetime(hora) <= datetime('now')");
-        await client.execute("UPDATE trayectos SET status = 'finalizado' WHERE status = 'en curso' AND datetime(hora, '+10 minutes') <= datetime('now')");
-    } catch (e) {
-        const msg = String(e?.message || '');
-        if (/no such table:\s*trayectos/i.test(msg)) return;
-        throw e;
-    }
-};
 
 const initDatabase = async () => {
     await client.execute('PRAGMA foreign_keys = ON');
@@ -61,6 +42,8 @@ const initDatabase = async () => {
     destino_lat REAL NULL,
     destino_lng REAL NULL,
     
+    notified_15min INTEGER NOT NULL DEFAULT 0,
+    
     -- 8. Clave Foránea
     FOREIGN KEY (conductor) REFERENCES users(username),
     
@@ -72,7 +55,6 @@ const initDatabase = async () => {
         status IN ('en curso', 'programado', 'finalizado', 'cancelado')
     )
 );`,
-        `ALTER TABLE trayectos ADD COLUMN notified_15min INTEGER NOT NULL DEFAULT 0`,
         `CREATE TABLE IF NOT EXISTS reservas (
             id_reserva INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
@@ -80,7 +62,10 @@ const initDatabase = async () => {
             status TEXT NOT NULL DEFAULT 'pending',
             FOREIGN KEY (username) REFERENCES users(username),
             FOREIGN KEY (id_trayecto) REFERENCES trayectos(id),
-            UNIQUE(username, id_trayecto)
+            UNIQUE(username, id_trayecto),
+            CONSTRAINT chk_reserva_status CHECK (
+                status IN ('pending', 'completed', 'canceled')
+            )
         )`,
         `CREATE TABLE IF NOT EXISTS comments (
             id_comment INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,11 +93,6 @@ const initDatabase = async () => {
             username TEXT NOT NULL,
             FOREIGN KEY(username) REFERENCES users(username),
             UNIQUE(username, address)
-        )`,
-        `CREATE TABLE IF NOT EXISTS accounts (
-            username TEXT PRIMARY KEY,
-            stripe_account_id TEXT,
-            FOREIGN KEY(username) REFERENCES users(username)
         )`,
         `CREATE TRIGGER IF NOT EXISTS trg_reservas_after_delete_completed
             AFTER DELETE ON reservas

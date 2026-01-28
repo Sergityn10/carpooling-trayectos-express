@@ -1,49 +1,61 @@
-CREATE TABLE reservas (
+CREATE TABLE IF NOT EXISTS reservas (
+     id_reserva INTEGER PRIMARY KEY AUTOINCREMENT,
+     username TEXT NOT NULL,
+     id_trayecto INTEGER NOT NULL,
+     status TEXT NOT NULL DEFAULT 'pending',
+     FOREIGN KEY (username) REFERENCES users(username),
+     FOREIGN KEY (id_trayecto) REFERENCES trayectos(id),
+     UNIQUE(username, id_trayecto),
+     CONSTRAINT chk_reserva_status CHECK (
+         status IN ('pending', 'completed', 'canceled')
+     )
+ );
+
+ CREATE TRIGGER IF NOT EXISTS trg_reservas_after_delete_completed
+     AFTER DELETE ON reservas
+     WHEN OLD.status = 'completed'
+ BEGIN
+     UPDATE trayectos
+     SET disponible = disponible + 1
+     WHERE id = OLD.id_trayecto;
+ END;
+
+ CREATE INDEX IF NOT EXISTS idx_reservas_trayecto ON reservas(id_trayecto);
+
+ --MYSQL
+CREATE TABLE IF NOT EXISTS reservas (
     id_reserva INT AUTO_INCREMENT PRIMARY KEY,
-    id_trayecto BIGINT UNSIGNED  NOT NULL,
-    username VARCHAR(255) NOT NULL,
-    status ENUM('pending', 'completed', 'canceled') DEFAULT 'pending',
-    stripe_checkout_session_id VARCHAR(255) DEFAULT NULL,
-    stripe_payment_intent_id VARCHAR(255) DEFAULT NULL,
-    stripe_payment_intent_status VARCHAR(255) DEFAULT NULL,
-    FOREIGN KEY (id_trayecto) REFERENCES trayectos(id),
-    FOREIGN KEY (username) REFERENCES users(username),
-    UNIQUE KEY unique_reserva (id_trayecto, username)
-);
-CREATE TABLE reservas (
-    -- 1. Clave primaria con autoincremento
-    id_reserva INTEGER PRIMARY KEY AUTOINCREMENT,
+    username VARCHAR(100) NOT NULL,
+    id_trayecto INT NOT NULL,
+    status ENUM('pending', 'completed', 'canceled') NOT NULL DEFAULT 'pending',
     
-    -- 2. Tipos de datos INTEGER
-    id_trayecto INTEGER NOT NULL,
+    -- Restricciones de Relación
+    CONSTRAINT fk_reserva_user 
+        FOREIGN KEY (username) REFERENCES users(username)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_reserva_trayecto 
+        FOREIGN KEY (id_trayecto) REFERENCES trayectos(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
     
-    -- 3. Tipos de datos TEXT
-    username TEXT NOT NULL,
-    
-    -- 4. Tipo ENUM sustituido por TEXT y restricción CHECK
-    status TEXT NOT NULL DEFAULT 'pending',
-    
-    -- -- 5. Campos de Stripe como TEXT
-    -- stripe_checkout_session_id TEXT DEFAULT NULL,
-    -- stripe_payment_intent_id TEXT DEFAULT NULL,
-    -- stripe_payment_intent_status TEXT DEFAULT NULL,
-    
-    -- 6. Claves foráneas
-    FOREIGN KEY (id_trayecto) REFERENCES trayectos(id),
-    FOREIGN KEY (username) REFERENCES users(username),
-    
-    -- 7. Restricción UNIQUE
-    UNIQUE (id_trayecto, username),
-    .
+    -- Unicidad: un usuario no puede reservar dos veces el mismo trayecto
+    UNIQUE KEY uk_user_trayecto (username, id_trayecto)
+) ENGINE=InnoDB;
 
-    -- Restricción CHECK para simular el ENUM
-    CONSTRAINT chk_reserva_status CHECK (
-        status IN ('pending', 'completed', 'canceled')
-    )
-);
+-- Índice de optimización
+CREATE INDEX idx_reservas_trayecto ON reservas(id_trayecto);
 
-ALTER TABLE carpooling.reservas 
-ADD COLUMN stripe_payment_intent_status VARCHAR(255) DEFAULT NULL,
-ADD COLUMN status ENUM('pending', 'completed', 'canceled') NOT NULL DEFAULT 'pending',
-ADD COLUMN stripe_checkout_session_id VARCHAR(255) DEFAULT NULL,
-ADD COLUMN stripe_payment_intent_id VARCHAR(255) DEFAULT NULL;
+-- TRIGGER para actualizar plazas disponibles
+DELIMITER //
+
+CREATE TRIGGER trg_reservas_after_delete_completed
+AFTER DELETE ON reservas
+FOR EACH ROW
+BEGIN
+    IF OLD.status = 'completed' THEN
+        UPDATE trayectos
+        SET disponible = disponible + 1
+        WHERE id = OLD.id_trayecto;
+    END IF;
+END //
+
+DELIMITER ;
