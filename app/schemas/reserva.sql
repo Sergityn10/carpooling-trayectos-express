@@ -3,11 +3,20 @@ CREATE TABLE IF NOT EXISTS reservas (
      username TEXT NOT NULL,
      id_trayecto INTEGER NOT NULL,
      status TEXT NOT NULL DEFAULT 'pending',
+     stripe_checkout_session_id TEXT,
+     stripe_payment_intent_id TEXT,
+     stripe_payment_intent_status TEXT,
+     trip_outcome TEXT NOT NULL DEFAULT 'pending',
+     trip_outcome_reason TEXT,
+     trip_outcome_at TEXT,
      FOREIGN KEY (username) REFERENCES users(username),
      FOREIGN KEY (id_trayecto) REFERENCES trayectos(id),
      UNIQUE(username, id_trayecto),
      CONSTRAINT chk_reserva_status CHECK (
          status IN ('pending', 'completed', 'canceled')
+     ),
+     CONSTRAINT chk_reserva_trip_outcome CHECK (
+         trip_outcome IN ('pending', 'success', 'issue')
      )
  );
 
@@ -28,6 +37,12 @@ CREATE TABLE IF NOT EXISTS reservas (
     username VARCHAR(100) NOT NULL,
     id_trayecto INT NOT NULL,
     status ENUM('pending', 'completed', 'canceled') NOT NULL DEFAULT 'pending',
+    stripe_checkout_session_id VARCHAR(255) NULL,
+    stripe_payment_intent_id VARCHAR(255) NULL,
+    stripe_payment_intent_status VARCHAR(100) NULL,
+    trip_outcome ENUM('pending', 'success', 'issue') NOT NULL DEFAULT 'pending',
+    trip_outcome_reason TEXT NULL,
+    trip_outcome_at DATETIME NULL,
     
     -- Restricciones de Relación
     CONSTRAINT fk_reserva_user 

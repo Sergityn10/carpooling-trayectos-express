@@ -3,7 +3,9 @@ import nodemailer from "nodemailer";
 function buildTransporter() {
   const service = process.env.SMTP_SERVICE;
   const host = process.env.SMTP_HOST;
-  const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined;
+  const port = process.env.SMTP_PORT
+    ? Number(process.env.SMTP_PORT)
+    : undefined;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
 
@@ -14,7 +16,7 @@ function buildTransporter() {
     return nodemailer.createTransport({
       service,
       secure: port === 465,
-      auth: { user, pass }
+      auth: { user, pass },
     });
   }
 
@@ -22,20 +24,18 @@ function buildTransporter() {
     host,
     port,
     secure: port === 465,
-    auth: { user, pass }
+    auth: { user, pass },
   });
 }
 
 export async function sendEmail({ to, subject, text }) {
-  let transporter
-  try{
-
-   transporter = buildTransporter();
-  }
-  catch (error){
+  let transporter;
+  try {
+    transporter = buildTransporter();
+  } catch (error) {
     console.error("Error al enviar email:", error);
     return { skipped: true };
-    return 
+    return;
   }
   if (!transporter) {
     console.warn("SMTP no configurado; se omite el envío de email");
@@ -52,7 +52,7 @@ export async function sendEmail({ to, subject, text }) {
       from,
       to,
       subject,
-      text
+      text,
     });
     return { skipped: false, messageId: info?.messageId };
   } catch (error) {
@@ -69,5 +69,21 @@ export async function sendTrayectoEnCursoEmail({ to, trayecto }) {
 export async function sendTrayectoAPuntoDeComenzar({ to, trayecto }) {
   const subject = "Tu trayecto va a empezar pronto";
   const text = `Tu trayecto #${trayecto.id} de ${trayecto.origen} a ${trayecto.destino} empieza en menos de 15 minutos.`;
+  return sendEmail({ to, subject, text });
+}
+
+export async function sendTrayectoFinalizadoConfirmacionEmail({
+  to,
+  trayecto,
+  frontendUrl,
+}) {
+  const subject = "Tu trayecto ha finalizado";
+  const trayectoUrl = frontendUrl
+    ? `${frontendUrl}trayecto/${trayecto.id}`
+    : null;
+  const linkText = trayectoUrl
+    ? `\n\nConfirma que has llegado desde: ${trayectoUrl}`
+    : "";
+  const text = `El trayecto #${trayecto.id} de ${trayecto.origen} a ${trayecto.destino} ha sido marcado como finalizado.${linkText}`;
   return sendEmail({ to, subject, text });
 }
