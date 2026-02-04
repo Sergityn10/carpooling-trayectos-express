@@ -1,11 +1,18 @@
 import cron from "node-cron";
 import { database } from "./database.js";
-import { sendTrayectoAPuntoDeComenzar, sendTrayectoEnCursoEmail } from "./utils/mailer.js";
+import {
+  sendTrayectoAPuntoDeComenzar,
+  sendTrayectoEnCursoEmail,
+  sendTrayectoFinalizadoConfirmacionEmail,
+} from "./utils/mailer.js";
 
 async function getUserEmail(connection, username) {
   if (!username) return null;
   try {
-    const [rows] = await connection.query("SELECT email FROM users WHERE username = ?", [username]);
+    const [rows] = await connection.query(
+      "SELECT email FROM users WHERE username = ?",
+      [username],
+    );
     const email = rows?.[0]?.email;
     return typeof email === "string" && email.trim() ? email.trim() : null;
   } catch {
@@ -16,10 +23,13 @@ async function getUserEmail(connection, username) {
 async function notifyTrayectoEnCurso(connection, trayecto) {
   const [reservas] = await connection.query(
     "SELECT DISTINCT username FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
-    [trayecto.id]
+    [trayecto.id],
   );
 
-  const usernames = new Set([trayecto.conductor, ...(reservas ?? []).map((r) => r.username)]);
+  const usernames = new Set([
+    trayecto.conductor,
+    ...(reservas ?? []).map((r) => r.username),
+  ]);
   const emails = [];
 
   for (const username of usernames) {
@@ -33,9 +43,9 @@ async function notifyTrayectoEnCurso(connection, trayecto) {
     emails.map((to) =>
       sendTrayectoEnCursoEmail({
         to,
-        trayecto
-      })
-    )
+        trayecto,
+      }),
+    ),
   );
 
   for (const r of results) {
@@ -45,17 +55,51 @@ async function notifyTrayectoEnCurso(connection, trayecto) {
   }
 }
 
+export async function notifyTrayectoFinalizado(connection, trayecto) {
+  const [reservas] = await connection.query(
+    "SELECT DISTINCT username FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
+    [trayecto.id],
+  );
+
+  const usernames = new Set([...(reservas ?? []).map((r) => r.username)]);
+  const emails = [];
+
+  for (const username of usernames) {
+    const email = await getUserEmail(connection, username);
+    if (email) emails.push(email);
+  }
+
+  if (emails.length === 0) return;
+
+  const frontendUrl = process.env.FRONTEND_URL;
+  const results = await Promise.allSettled(
+    emails.map((to) =>
+      sendTrayectoFinalizadoConfirmacionEmail({
+        to,
+        trayecto,
+        frontendUrl,
+      }),
+    ),
+  );
+
+  for (const r of results) {
+    if (r.status === "rejected") {
+      console.error("Error enviando emails de trayecto finalizado:", r.reason);
+    }
+  }
+}
+
 async function tickTrayectoStatusAndNotify() {
   const connection = await database.getConnection();
 
   const [toStart] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND datetime(hora) <= datetime('now')"
+    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND datetime(hora) <= datetime('now')",
   );
 
   for (const trayecto of toStart ?? []) {
     const [result] = await connection.query(
       "UPDATE trayectos SET status = 'en curso' WHERE id = ? AND status = 'programado'",
-      [trayecto.id]
+      [trayecto.id],
     );
 
     if (result?.affectedRows > 0) {
@@ -67,25 +111,43 @@ async function tickTrayectoStatusAndNotify() {
     }
   }
 
-  await connection.query(
-    "UPDATE trayectos SET status = 'finalizado' WHERE status = 'en curso' AND datetime(hora, '+10 minutes') <= datetime('now')"
+  const [toFinalize] = await connection.query(
+    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'en curso' AND datetime(hora, '+2 days') <= datetime('now')",
   );
+
+  for (const trayecto of toFinalize ?? []) {
+    const [result] = await connection.query(
+      "UPDATE trayectos SET status = 'finalizado' WHERE id = ? AND status = 'en curso'",
+      [trayecto.id],
+    );
+
+    if (result?.affectedRows > 0) {
+      try {
+        await notifyTrayectoFinalizado(connection, trayecto);
+      } catch (e) {
+        console.error("Error enviando emails de trayecto finalizado:", e);
+      }
+    }
+  }
 }
 
 async function tickTrayectosAPuntoDeComenzar() {
   const connection = await database.getConnection();
 
   const [trayectos] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND (notified_15min IS NULL OR notified_15min = 0) AND datetime(hora) > datetime('now') AND datetime(hora) <= datetime('now', '+15 minutes')"
+    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND (notified_15min IS NULL OR notified_15min = 0) AND datetime(hora) > datetime('now') AND datetime(hora) <= datetime('now', '+15 minutes')",
   );
 
   for (const trayecto of trayectos ?? []) {
     const [reservas] = await connection.query(
       "SELECT DISTINCT username FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
-      [trayecto.id]
+      [trayecto.id],
     );
 
-    const usernames = new Set([trayecto.conductor, ...(reservas ?? []).map((r) => r.username)]);
+    const usernames = new Set([
+      trayecto.conductor,
+      ...(reservas ?? []).map((r) => r.username),
+    ]);
     const emails = [];
 
     for (const username of usernames) {
@@ -98,28 +160,32 @@ async function tickTrayectosAPuntoDeComenzar() {
         emails.map((to) =>
           sendTrayectoAPuntoDeComenzar({
             to,
-            trayecto
-          })
-        )
+            trayecto,
+          }),
+        ),
       );
 
       for (const r of results) {
         if (r.status === "rejected") {
-          console.error("Error enviando email de trayecto a punto de comenzar:", r.reason);
+          console.error(
+            "Error enviando email de trayecto a punto de comenzar:",
+            r.reason,
+          );
         }
       }
     }
 
     await connection.query(
       "UPDATE trayectos SET notified_15min = 1 WHERE id = ? AND (notified_15min IS NULL OR notified_15min = 0)",
-      [trayecto.id]
+      [trayecto.id],
     );
   }
 }
 
-export function startTrayectoSoonReminderCron({ schedule = "*/5 * * * *" } = {}) {
+export function startTrayectoSoonReminderCron({
+  schedule = "*/5 * * * *",
+} = {}) {
   let running = false;
-  console.log("Entro ene le trayectos Status Cron reminder soon")
 
   const task = cron.schedule(schedule, async () => {
     if (running) return;
@@ -139,9 +205,7 @@ export function startTrayectoSoonReminderCron({ schedule = "*/5 * * * *" } = {})
 
 export function startTrayectoStatusCron({ schedule = "*/1 * * * *" } = {}) {
   let running = false;
-    console.log("Entro ene le trayectos Status Cron")
   const task = cron.schedule(schedule, async () => {
-
     if (running) return;
     running = true;
     try {

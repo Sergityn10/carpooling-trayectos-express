@@ -1,96 +1,59 @@
--- La propiedad "fecha" acepta valores en formato de fecha estándar SQL (YYYY-MM-DD), por ejemplo: '2024-06-01'. No se permiten otros formatos como DD/MM/YYYY o MM-DD-YYYY.
-CREATE TABLE trayectos (
-    id SERIAL PRIMARY KEY,
-    origen VARCHAR(100) NOT NULL,
-    destino VARCHAR(100) NOT NULL,
-    hora TIMESTAMP NOT NULL,
-    plazas INT NOT NULL CHECK (plazas BETWEEN 1 AND 4),
+CREATE TABLE IF NOT EXISTS trayectos (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     origen TEXT NOT NULL,
+     destino TEXT NOT NULL,
+     hora TEXT NOT NULL,
+     plazas INTEGER NOT NULL,
+     disponible INTEGER NOT NULL,
+     precio REAL NOT NULL,
+     conductor TEXT NOT NULL,
+     routeIndex INTEGER NULL DEFAULT 0,
+     status TEXT NOT NULL DEFAULT 'programado',
+     origen_lat REAL NULL,
+     origen_lng REAL NULL,
+     destino_lat REAL NULL,
+     destino_lng REAL NULL,
+     notified_15min INTEGER NOT NULL DEFAULT 0,
+     FOREIGN KEY (conductor) REFERENCES users(username),
+     CONSTRAINT chk_plazas CHECK (plazas >= 1 AND plazas <= 4),
+     CONSTRAINT chk_trayecto_status CHECK (
+         status IN ('en curso', 'programado', 'finalizado', 'cancelado')
+     )
+ );
+
+ CREATE INDEX IF NOT EXISTS idx_trayectos_origen ON trayectos(origen_lat, origen_lng);
+ CREATE INDEX IF NOT EXISTS idx_trayectos_destino ON trayectos(destino_lat, destino_lng);
+ CREATE INDEX IF NOT EXISTS idx_trayectos_hora ON trayectos(hora);
+
+--mysql
+CREATE TABLE IF NOT EXISTS trayectos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    origen VARCHAR(255) NOT NULL,
+    destino VARCHAR(255) NOT NULL,
+    hora DATETIME NOT NULL, -- Cambiado de TEXT a DATETIME para mejor manejo temporal
+    plazas INT NOT NULL,
     disponible INT NOT NULL,
-    precio FLOAT NOT NULL,
-    conductor VARCHAR(50) NOT NULL,
+    precio DECIMAL(10, 2) NOT NULL, -- DECIMAL es más preciso para dinero que REAL
+    conductor VARCHAR(100) NOT NULL,
     routeIndex INT NULL DEFAULT 0,
-    status ENUM("en curso", "programado", "finalizado", "cancelado") NOT NULL DEFAULT "programado",
+    status ENUM('en curso', 'programado', 'finalizado', 'cancelado') NOT NULL DEFAULT 'programado',
     origen_lat DECIMAL(10, 8) NULL,
     origen_lng DECIMAL(11, 8) NULL,
     destino_lat DECIMAL(10, 8) NULL,
     destino_lng DECIMAL(11, 8) NULL,
-    FOREIGN KEY (conductor) REFERENCES users(username)
-);
-
-CREATE TABLE trayectos (
-    -- 1. Clave primaria SERIAL se convierte a INTEGER PRIMARY KEY AUTOINCREMENT
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    notified_15min TINYINT(1) NOT NULL DEFAULT 0,
     
-    -- 2. Cadenas de texto
-    origen TEXT NOT NULL,
-    destino TEXT NOT NULL,
+    -- Relaciones
+    CONSTRAINT fk_trayecto_conductor 
+        FOREIGN KEY (conductor) REFERENCES users(username)
+        ON DELETE CASCADE ON UPDATE CASCADE,
     
-    -- 3. TIMESTAMP se convierte a TEXT (formato ISO 8601) o INTEGER (UNIX Epoch)
-    hora TEXT NOT NULL,
-    
-    -- 4. Tipos INTEGER
-    plazas INTEGER NOT NULL,
-    disponible INTEGER NOT NULL,
-    
-    -- 5. Tipos numéricos para precios y coordenadas
-    precio REAL NOT NULL,
-    conductor TEXT NOT NULL,
-    routeIndex INTEGER NULL DEFAULT 0,
-    
-    -- 6. ENUM simulado con TEXT y DEFAULT
-    status TEXT NOT NULL DEFAULT 'programado',
-    
-    -- 7. DECIMAL se convierte a REAL
-    origen_lat REAL NULL,
-    origen_lng REAL NULL,
-    destino_lat REAL NULL,
-    destino_lng REAL NULL,
-    
-    -- 8. Clave Foránea
-    FOREIGN KEY (conductor) REFERENCES users(username),
-    
-    -- 9. Restricción CHECK
-    CONSTRAINT chk_plazas CHECK (plazas >= 1 AND plazas <= 4),
-    
-    -- 10. Restricción CHECK para simular el ENUM 'status'
-    CONSTRAINT chk_trayecto_status CHECK (
-        status IN ('en curso', 'programado', 'finalizado', 'cancelado')
-    )
-);
+    -- Validaciones
+    CONSTRAINT chk_plazas CHECK (plazas >= 1 AND plazas <= 4)
+) ENGINE=InnoDB;
 
-ALTER TABLE trayectos ADD COLUMN disponible INT;
-ALTER TABLE trayectos ADD COLUMN routeIndex INT NULL DEFAULT 0;
-ALTER TABLE trayectos ADD COLUMN status ENUM("en curso", "programado", "finalizado", "cancelado") NOT NULL DEFAULT "programado";
+-- Índices espaciales y de búsqueda
+CREATE INDEX idx_trayectos_origen_coords ON trayectos(origen_lat, origen_lng);
+CREATE INDEX idx_trayectos_destino_coords ON trayectos(destino_lat, destino_lng);
+CREATE INDEX idx_trayectos_hora ON trayectos(hora);
 
-ALTER TABLE trayectos
-MODIFY precio FLOAT;
-
-
-CREATE OR REPLACE FUNCTION set_disponible_on_insert()
-RETURNS TRIGGER AS $$
-BEGIN
-  -- Si la columna 'disponible' es nula, le asignamos el valor de 'plazas'
-  IF NEW.disponible IS NULL THEN
-    NEW.disponible = NEW.plazas;
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Luego, asociamos la función a la tabla con un trigger BEFORE INSERT
-CREATE TRIGGER set_disponible_before_insert
-BEFORE INSERT ON trayectos
-FOR EACH ROW
-EXECUTE FUNCTION set_disponible_on_insert();
-
--- Paso 1: Añadir columnas de Latitud y Longitud para Origen
-ALTER TABLE trayectos
-ADD COLUMN origen_lat DECIMAL(10, 8) NULL,
-ADD COLUMN origen_lng DECIMAL(11, 8) NULL;
-
--- Paso 2: Añadir columnas de Latitud y Longitud para Destino
-ALTER TABLE trayectos
-ADD COLUMN destino_lat DECIMAL(10, 8) NULL,
-ADD COLUMN destino_lng DECIMAL(11, 8) NULL;
-
--- Nota: Estas columnas deben ser llenadas con coordenadas al CREAR un trayecto.
