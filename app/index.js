@@ -197,7 +197,7 @@ app.get(
   },
 );
 app.post(
-  "/users/:userId/preferences/default",
+  "/api/users/:userId/preferences/default",
   PreferencesController.insertDefaultUserPreferences,
 );
 
