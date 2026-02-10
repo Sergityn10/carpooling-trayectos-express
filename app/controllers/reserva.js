@@ -308,9 +308,8 @@ async function addReserva(req, res) {
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          // Cookie: cookieHeaderValue,
-          // Authorization: `Bearer ${token}`,
-          ...headers,
+          Cookie: cookieHeaderValue,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           amount: totalAmount,
