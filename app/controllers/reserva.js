@@ -305,10 +305,12 @@ async function addReserva(req, res) {
       `${USUARIOS_URL}/api/payment/payment-intent/checkout`,
       {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          Cookie: cookieHeaderValue,
-          Authorization: `Bearer ${token}`,
+          // Cookie: cookieHeaderValue,
+          // Authorization: `Bearer ${token}`,
+          ...headers,
         },
         body: JSON.stringify({
           amount: totalAmount,
