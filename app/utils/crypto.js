@@ -1,13 +1,15 @@
 import crypto from "crypto";
 
-// IMPORTANTE: Esta clave debe estar en tu archivo .env
-// Debe tener exactamente 32 caracteres para AES-256
-const ENCRYPTION_KEY =
-  process.env.ENCRYPTION_KEY || "12345678901234567890123456789012";
+// IMPORTANTE: Esta clave debe estar definida en tu archivo .env
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 const IV_LENGTH = 16; // Para AES, esto siempre es 16
 
 function getEncryptionKeyBuffer() {
-  const raw = String(ENCRYPTION_KEY ?? "");
+  if (!ENCRYPTION_KEY) {
+    throw new Error("ENCRYPTION_KEY environment variable is not set");
+  }
+
+  const raw = String(ENCRYPTION_KEY);
 
   if (/^[0-9a-fA-F]{64}$/.test(raw)) {
     return Buffer.from(raw, "hex");
@@ -48,7 +50,6 @@ function decrypt(text) {
     let encryptedText = Buffer.from(textParts.join(":"), "hex");
 
     // 4. Creamos el objeto descifrador
-    // Debe usar el MISMO algoritmo y la MISMA clave que al encriptar
     let decipher = crypto.createDecipheriv(
       "aes-256-cbc",
       getEncryptionKeyBuffer(),
@@ -62,8 +63,12 @@ function decrypt(text) {
     // 6. Retornamos el texto original
     return decrypted.toString();
   } catch (error) {
-    // Si la clave es incorrecta o el texto está corrupto, fallará aquí
-    console.error("Error al desencriptar:", error);
+    // Mejor mensaje de error
+    console.error(
+      "Error al desencriptar: ",
+      `Asegúrese de que ENCRYPTION_KEY es correcto y coincide en todos los entornos. ` +
+        `Detalles: ${error.message}`,
+    );
     return null;
   }
 }
