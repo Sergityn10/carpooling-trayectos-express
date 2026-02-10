@@ -7,6 +7,7 @@ import { initDatabase } from "./database.js";
 import { TrayectosController } from "./controllers/trayectos.js";
 import { ReservaController } from "./controllers/reserva.js";
 import { OpinionsController } from "./controllers/opinions.js";
+import { PreferencesController } from "./controllers/preferences.js";
 import { utilsAuthentication } from "./utils/authentication.js";
 import { UbicacionesController } from "./controllers/ubicaciones.js";
 import {
@@ -106,7 +107,7 @@ app.post(
   },
 );
 app.get(
-  "/api/trayecto/conductor/:username",
+  "/api/trayecto/conductor/:id",
   utilsAuthentication.tryAuthenticate,
   async (req, res) => {
     TrayectosController.obtenerTrayectosPorConductor(req, res);
@@ -127,14 +128,14 @@ app.post(
   },
 );
 
-app.get("/api/comments/username_commentator/:username", async (req, res) => {
-  // Llama a la función getOpinionByUsernameCommented del controlador de opiniones
-  OpinionsController.getOpinionByUsernameCommentator(req, res);
+app.get("/api/comments/user_id_commentator/:userId", async (req, res) => {
+  // Llama a la función getOpinionByUserIdCommented del controlador de opiniones
+  OpinionsController.getOpinionByUserIdCommentator(req, res);
 });
 
-app.get("/api/comments/username_trayect/:username", async (req, res) => {
-  // Llama a la función getOpinionByUsernameCommented del controlador de opiniones
-  OpinionsController.getOpinionByUsernameTrayect(req, res);
+app.get("/api/comments/user_id_trayect/:userId", async (req, res) => {
+  // Llama a la función getOpinionByUserIdCommented del controlador de opiniones
+  OpinionsController.getOpinionByUserIdTrayect(req, res);
 });
 app.get("/api/comments/travelId/:travelId", async (req, res) => {
   OpinionsController.getOpinionsByTravelId(req, res);
@@ -153,7 +154,7 @@ app.post("/api/reserva", utilsAuthentication.authenticate, async (req, res) => {
 });
 
 app.get(
-  "/api/reserva/username/:usernameParam",
+  "/api/reserva/userId/:userIdParam",
   utilsAuthentication.authenticate,
   async (req, res) => {
     ReservaController.obtenerMisReservas(req, res);
@@ -187,6 +188,43 @@ app.post(
   },
 );
 
+// PREFERENCIAS DE VIAJE
+app.get(
+  "/api/preferences/definitions",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    PreferencesController.getDefinitions(req, res);
+  },
+);
+app.post(
+  "/users/:userId/preferences/default",
+  PreferencesController.insertDefaultUserPreferences,
+);
+
+app.get(
+  "/api/preferences/me",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    PreferencesController.getMyPreferences(req, res);
+  },
+);
+
+app.put(
+  "/api/preferences/me",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    PreferencesController.updateMyPreferences(req, res);
+  },
+);
+
+app.get(
+  "/api/preferences/user_id/:userIdParam",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    PreferencesController.getUserPreferences(req, res);
+  },
+);
+
 // UBICACIONES
 app.post(
   "/api/ubicacion",
@@ -200,9 +238,9 @@ app.get("/api/ubicacion", async (req, res) => {
   UbicacionesController.obtenerUbicaciones(req, res);
 });
 
-// IMPORTANTE: ruta de username antes que :id
+// IMPORTANTE: ruta de user_id antes que :id
 app.get(
-  "/api/ubicacion/username/:usernameParam",
+  "/api/ubicacion/user_id/:userIdParam",
   utilsAuthentication.authenticate,
   async (req, res) => {
     UbicacionesController.obtenerUbicacionesPorUsuario(req, res);

@@ -2,7 +2,7 @@ import z from "zod";
 
 const reservaSchema = z.object({
   id: z.number().int().positive(),
-  username: z.string().min(1).max(50),
+  user_id: z.number().int().positive(),
   trayecto_id: z.number().int().positive(),
   status: z.enum(["pending", "completed", "canceled"]).default("pending"),
   stripe_checkout_session_id: z.string().min(1).max(100).optional(),

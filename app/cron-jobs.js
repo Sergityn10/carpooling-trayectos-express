@@ -6,12 +6,12 @@ import {
   sendTrayectoFinalizadoConfirmacionEmail,
 } from "./utils/mailer.js";
 
-async function getUserEmail(connection, username) {
-  if (!username) return null;
+async function getUserEmailById(connection, userId) {
+  if (!userId) return null;
   try {
     const [rows] = await connection.query(
-      "SELECT email FROM users WHERE username = ?",
-      [username],
+      "SELECT email FROM users WHERE id = ?",
+      [userId],
     );
     const email = rows?.[0]?.email;
     return typeof email === "string" && email.trim() ? email.trim() : null;
@@ -22,18 +22,18 @@ async function getUserEmail(connection, username) {
 
 async function notifyTrayectoEnCurso(connection, trayecto) {
   const [reservas] = await connection.query(
-    "SELECT DISTINCT username FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
+    "SELECT DISTINCT user_id FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
     [trayecto.id],
   );
 
-  const usernames = new Set([
+  const userIds = new Set([
     trayecto.conductor,
-    ...(reservas ?? []).map((r) => r.username),
+    ...(reservas ?? []).map((r) => r.user_id),
   ]);
   const emails = [];
 
-  for (const username of usernames) {
-    const email = await getUserEmail(connection, username);
+  for (const uid of userIds) {
+    const email = await getUserEmailById(connection, uid);
     if (email) emails.push(email);
   }
 
@@ -57,15 +57,15 @@ async function notifyTrayectoEnCurso(connection, trayecto) {
 
 export async function notifyTrayectoFinalizado(connection, trayecto) {
   const [reservas] = await connection.query(
-    "SELECT DISTINCT username FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
+    "SELECT DISTINCT user_id FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
     [trayecto.id],
   );
 
-  const usernames = new Set([...(reservas ?? []).map((r) => r.username)]);
+  const userIds = new Set([...(reservas ?? []).map((r) => r.user_id)]);
   const emails = [];
 
-  for (const username of usernames) {
-    const email = await getUserEmail(connection, username);
+  for (const uid of userIds) {
+    const email = await getUserEmailById(connection, uid);
     if (email) emails.push(email);
   }
 
@@ -140,18 +140,18 @@ async function tickTrayectosAPuntoDeComenzar() {
 
   for (const trayecto of trayectos ?? []) {
     const [reservas] = await connection.query(
-      "SELECT DISTINCT username FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
+      "SELECT DISTINCT user_id FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
       [trayecto.id],
     );
 
-    const usernames = new Set([
+    const userIds = new Set([
       trayecto.conductor,
-      ...(reservas ?? []).map((r) => r.username),
+      ...(reservas ?? []).map((r) => r.user_id),
     ]);
     const emails = [];
 
-    for (const username of usernames) {
-      const email = await getUserEmail(connection, username);
+    for (const uid of userIds) {
+      const email = await getUserEmailById(connection, uid);
       if (email) emails.push(email);
     }
 

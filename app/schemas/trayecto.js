@@ -9,7 +9,7 @@ const trayectSchema = z.object({
   hora: z.string().min(5).max(5).regex(horaRegex),
   plazas: z.number().min(1).max(7),
   precio: z.number().min(0),
-  conductor: z.string().min(1).max(50),
+  conductor: z.number().int().positive(),
   disponible: z.number().int().min(0).max(7).optional(),
   routeIndex: z.number().int().optional(),
 });

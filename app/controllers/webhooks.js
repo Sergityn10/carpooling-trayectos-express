@@ -63,12 +63,18 @@ async function handleCheckoutSessionCompleted(event) {
   const connection = await database.getConnection();
 
   let reserva = await connection.query(
-    "SELECT id_reserva, id_trayecto, username, status, stripe_checkout_session_id FROM reservas WHERE stripe_checkout_session_id = ?",
+    "SELECT id_reserva, id_trayecto, user_id, status, stripe_checkout_session_id FROM reservas WHERE stripe_checkout_session_id = ?",
     [session.id],
   );
   reserva = reserva[0]?.[0];
   if (!reserva) return;
   if (String(reserva.status).toLowerCase() === "completed") return;
+
+  const [userRows] = await connection.query(
+    "SELECT id FROM users WHERE id = ?",
+    [reserva.user_id],
+  );
+  const userId = userRows[0]?.id;
 
   const amount = session.amount_total ?? null;
   const currency = session.currency ?? null;
@@ -77,14 +83,14 @@ async function handleCheckoutSessionCompleted(event) {
 
   try {
     await connection.query(
-      "INSERT INTO pagos (stripe_checkout_session_id, stripe_payment_intent_id, payment_status, amount, currency, username, id_trayecto, stripe_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO pagos (stripe_checkout_session_id, stripe_payment_intent_id, payment_status, amount, currency, user_id, id_trayecto, stripe_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       [
         session.id,
         paymentIntentId,
         paymentStatus,
         amount,
         currency,
-        reserva.username,
+        userId,
         reserva.id_trayecto,
         event.id,
       ],
@@ -109,7 +115,7 @@ async function handleCheckoutSessionExpired(event) {
   const connection = await database.getConnection();
 
   let reserva = await connection.query(
-    "SELECT id_reserva, id_trayecto, username, status, stripe_checkout_session_id FROM reservas WHERE stripe_checkout_session_id = ?",
+    "SELECT id_reserva, id_trayecto, user_id, status, stripe_checkout_session_id FROM reservas WHERE stripe_checkout_session_id = ?",
     [session.id],
   );
   reserva = reserva[0]?.[0];

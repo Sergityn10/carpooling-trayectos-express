@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS reservas (
      id_reserva INTEGER PRIMARY KEY AUTOINCREMENT,
-     username TEXT NOT NULL,
+     user_id INTEGER NOT NULL,
      id_trayecto INTEGER NOT NULL,
      status TEXT NOT NULL DEFAULT 'pending',
      stripe_checkout_session_id TEXT,
@@ -9,9 +9,9 @@ CREATE TABLE IF NOT EXISTS reservas (
      trip_outcome TEXT NOT NULL DEFAULT 'pending',
      trip_outcome_reason TEXT,
      trip_outcome_at TEXT,
-     FOREIGN KEY (username) REFERENCES users(username),
+     FOREIGN KEY (user_id) REFERENCES users(id),
      FOREIGN KEY (id_trayecto) REFERENCES trayectos(id),
-     UNIQUE(username, id_trayecto),
+     UNIQUE(user_id, id_trayecto),
      CONSTRAINT chk_reserva_status CHECK (
          status IN ('pending', 'completed', 'canceled')
      ),
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS reservas (
  --MYSQL
 CREATE TABLE IF NOT EXISTS reservas (
     id_reserva INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(100) NOT NULL,
+    user_id INT NOT NULL,
     id_trayecto INT NOT NULL,
     status ENUM('pending', 'completed', 'canceled') NOT NULL DEFAULT 'pending',
     stripe_checkout_session_id VARCHAR(255) NULL,
@@ -46,14 +46,14 @@ CREATE TABLE IF NOT EXISTS reservas (
     
     -- Restricciones de Relación
     CONSTRAINT fk_reserva_user 
-        FOREIGN KEY (username) REFERENCES users(username)
+        FOREIGN KEY (user_id) REFERENCES users(id)
         ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT fk_reserva_trayecto 
         FOREIGN KEY (id_trayecto) REFERENCES trayectos(id)
         ON DELETE CASCADE ON UPDATE CASCADE,
     
     -- Unicidad: un usuario no puede reservar dos veces el mismo trayecto
-    UNIQUE KEY uk_user_trayecto (username, id_trayecto)
+    UNIQUE KEY uk_user_trayecto (user_id, id_trayecto)
 ) ENGINE=InnoDB;
 
 -- Índice de optimización

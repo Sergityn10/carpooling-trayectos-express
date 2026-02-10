@@ -29,7 +29,7 @@ const initDatabase = async () => {
     
     -- 5. Tipos numéricos para precios y coordenadas
     precio REAL NOT NULL,
-    conductor TEXT NOT NULL,
+    conductor INTEGER NOT NULL,
     routeIndex INTEGER NULL DEFAULT 0,
     
     -- 6. ENUM simulado con TEXT y DEFAULT
@@ -44,7 +44,7 @@ const initDatabase = async () => {
     notified_15min INTEGER NOT NULL DEFAULT 0,
     
     -- 8. Clave Foránea
-    FOREIGN KEY (conductor) REFERENCES users(username),
+    FOREIGN KEY (conductor) REFERENCES users(id),
     
     -- 9. Restricción CHECK
     CONSTRAINT chk_plazas CHECK (plazas >= 1 AND plazas <= 4),
@@ -56,7 +56,7 @@ const initDatabase = async () => {
 );`,
     `CREATE TABLE IF NOT EXISTS reservas (
             id_reserva INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
             id_trayecto INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
             stripe_checkout_session_id TEXT,
@@ -65,9 +65,9 @@ const initDatabase = async () => {
             trip_outcome TEXT NOT NULL DEFAULT 'pending',
             trip_outcome_reason TEXT,
             trip_outcome_at TEXT,
-            FOREIGN KEY (username) REFERENCES users(username),
+            FOREIGN KEY (user_id) REFERENCES users(id),
             FOREIGN KEY (id_trayecto) REFERENCES trayectos(id),
-            UNIQUE(username, id_trayecto),
+            UNIQUE(user_id, id_trayecto),
             CONSTRAINT chk_reserva_status CHECK (
                 status IN ('pending', 'completed', 'canceled')
             ),
@@ -81,32 +81,20 @@ const initDatabase = async () => {
     `ALTER TABLE reservas ADD COLUMN trip_outcome TEXT NOT NULL DEFAULT 'pending'`,
     `ALTER TABLE reservas ADD COLUMN trip_outcome_reason TEXT`,
     `ALTER TABLE reservas ADD COLUMN trip_outcome_at TEXT`,
-    `CREATE TABLE IF NOT EXISTS pagos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            stripe_checkout_session_id TEXT,
-            stripe_payment_intent_id TEXT,
-            payment_status TEXT,
-            amount INTEGER,
-            currency TEXT,
-            username TEXT,
-            id_trayecto INTEGER,
-            stripe_event_id TEXT UNIQUE,
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (username) REFERENCES users(username),
-            FOREIGN KEY (id_trayecto) REFERENCES trayectos(id)
-        )`,
     `CREATE TABLE IF NOT EXISTS comments (
-            id_comment INTEGER PRIMARY KEY AUTOINCREMENT,
-            username_commentator TEXT NOT NULL,
-            username_trayect TEXT NOT NULL,
-            id_trayecto INTEGER NOT NULL,
-            opinion TEXT,
-            rating INTEGER,
-            FOREIGN KEY(username_commentator) REFERENCES users(username),
-            FOREIGN KEY(username_trayect) REFERENCES users(username),
-            FOREIGN KEY(id_trayecto) REFERENCES trayectos(id),
-            UNIQUE(username_commentator, id_trayecto)
-        )`,
+     id_comment INTEGER PRIMARY KEY AUTOINCREMENT,
+     user_id_commentator TEXT NOT NULL,
+     user_id_trayect TEXT NOT NULL,
+     id_trayecto INTEGER NOT NULL,
+     opinion TEXT,
+     rating INTEGER,
+     FOREIGN KEY(user_id_commentator) REFERENCES users(id),
+     FOREIGN KEY(user_id_trayect) REFERENCES users(id),
+     FOREIGN KEY(id_trayecto) REFERENCES trayectos(id),
+     UNIQUE(user_id_commentator, id_trayecto),
+     CONSTRAINT chk_opinion_rating CHECK (rating >= 1 AND rating <= 10)
+ );
+`,
     `CREATE TABLE IF NOT EXISTS ubicaciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             lat REAL NOT NULL,
@@ -118,9 +106,9 @@ const initDatabase = async () => {
             country TEXT,
             postal_code TEXT,
             type TEXT,
-            username TEXT NOT NULL,
-            FOREIGN KEY(username) REFERENCES users(username),
-            UNIQUE(username, address)
+            user_id INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id),
+            UNIQUE(user_id, address)
         )`,
     `CREATE TRIGGER IF NOT EXISTS trg_reservas_after_delete_completed
             AFTER DELETE ON reservas
@@ -137,6 +125,35 @@ const initDatabase = async () => {
     `CREATE INDEX IF NOT EXISTS idx_reservas_stripe_checkout_session ON reservas(stripe_checkout_session_id)`,
     `CREATE INDEX IF NOT EXISTS idx_pagos_checkout_session ON pagos(stripe_checkout_session_id)`,
     `CREATE INDEX IF NOT EXISTS idx_pagos_payment_intent ON pagos(stripe_payment_intent_id)`,
+    `CREATE TABLE IF NOT EXISTS preference_definitions (
+            pref_key TEXT PRIMARY KEY,
+            value_type TEXT NOT NULL,
+            default_value TEXT NOT NULL,
+            enum_values TEXT,
+            description TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            CONSTRAINT chk_pref_value_type CHECK (value_type IN ('boolean', 'number', 'text', 'enum'))
+        )`,
+    `CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id INTEGER NOT NULL,
+            pref_key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, pref_key),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (pref_key) REFERENCES preference_definitions(pref_key) ON DELETE CASCADE
+        )`,
+    `CREATE INDEX IF NOT EXISTS idx_user_preferences_user_id ON user_preferences(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_user_preferences_pref_key ON user_preferences(pref_key)`,
+    `INSERT OR IGNORE INTO preference_definitions (pref_key, value_type, default_value, enum_values, description) VALUES
+        ('smoking_allowed', 'boolean', '0', NULL, 'Permite fumar durante el viaje'),
+        ('pets_allowed', 'boolean', '0', NULL, 'Permite mascotas durante el viaje'),
+        ('music', 'boolean', '1', NULL, 'Música durante el viaje'),
+        ('talk_level', 'enum', 'normal', '["silencio","normal","charla"]', 'Nivel de conversación'),
+        ('temperature', 'enum', 'templado', '["frio","templado","calor"]', 'Temperatura preferida'),
+        ('luggage_size', 'enum', 'medio', '["pequeno","medio","grande"]', 'Tamaño de equipaje admitido'),
+        ('stops_allowed', 'boolean', '0', NULL, 'Permite paradas durante el viaje'),
+        ('max_detour_km', 'number', '0', NULL, 'Desvío máximo aceptado (km)')`,
   ];
   for (const sql of statements) {
     try {

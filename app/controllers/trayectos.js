@@ -4,6 +4,7 @@ import { OilPriceProvider } from "../providers/precio-oil.js";
 import { TrayectosSchema } from "../schemas/trayecto.js";
 import { DateUtils } from "../utils/date.js";
 import { notifyTrayectoFinalizado } from "../cron-jobs.js";
+import { methods as cryptoMethods } from "../utils/crypto.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -31,17 +32,17 @@ function getAuthHeaders(req) {
   return { token, headers };
 }
 
-async function hasUserRatedTrayecto(connection, username, trayectoId) {
-  if (!username || !trayectoId) return false;
+async function hasUserRatedTrayecto(connection, userId, trayectoId) {
+  if (!userId || !trayectoId) return false;
   const [rows] = await connection.query(
-    "SELECT 1 FROM comments WHERE id_trayecto = ? AND username_commentator = ? LIMIT 1",
-    [trayectoId, username],
+    "SELECT 1 FROM comments WHERE id_trayecto = ? AND user_id_commentator = ? LIMIT 1",
+    [trayectoId, userId],
   );
   return Array.isArray(rows) && rows.length > 0;
 }
 
-async function getRatedTrayectoIdsForUser(connection, username, trayectoIds) {
-  if (!username) return new Set();
+async function getRatedTrayectoIdsForUser(connection, userId, trayectoIds) {
+  if (!userId) return new Set();
   const ids = (trayectoIds ?? [])
     .map((x) => Number(x))
     .filter((x) => Number.isFinite(x));
@@ -49,14 +50,89 @@ async function getRatedTrayectoIdsForUser(connection, username, trayectoIds) {
 
   const placeholders = ids.map(() => "?").join(",");
   const [rows] = await connection.query(
-    `SELECT DISTINCT id_trayecto FROM comments WHERE username_commentator = ? AND id_trayecto IN (${placeholders})`,
-    [username, ...ids],
+    `SELECT DISTINCT id_trayecto FROM comments WHERE user_id_commentator = ? AND id_trayecto IN (${placeholders})`,
+    [userId, ...ids],
   );
   return new Set(
     (rows ?? [])
       .map((r) => Number(r.id_trayecto))
       .filter((x) => Number.isFinite(x)),
   );
+}
+
+function parsePreferenceValue(valueType, raw) {
+  const value = raw == null ? "" : String(raw);
+  switch (valueType) {
+    case "boolean":
+      return value === "1" || value.toLowerCase() === "true";
+    case "number": {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    }
+    case "text":
+    case "enum":
+      return value;
+    default:
+      return value;
+  }
+}
+
+async function getTrayectos(req, res) {
+  try {
+    const connection = await database.getConnection();
+    const [trayectos] = await connection.query(
+      "SELECT * FROM trayectos WHERE status != 'cancelado'",
+    );
+
+    // If there are no trayectos, return empty array
+    if (!trayectos || trayectos.length === 0) {
+      return res.status(200).send({ status: "Success", trayectos: [] });
+    }
+
+    // Get all unique driver ids
+    const driverIds = [...new Set(trayectos.map((t) => t.conductor))];
+
+    let preferencesByDriver = {};
+    if (driverIds.length > 0) {
+      const [preferences] = await connection.query(
+        `SELECT 
+          d.pref_key, 
+          d.value_type, 
+          u.user_id, 
+          u.value
+        FROM user_preferences u
+        JOIN preference_definitions d ON u.pref_key = d.pref_key
+        WHERE u.user_id IN (?) AND d.is_active = 1`,
+        [driverIds],
+      );
+
+      // Group preferences by user_id
+      for (const p of preferences) {
+        if (!preferencesByDriver[p.user_id]) {
+          preferencesByDriver[p.user_id] = {};
+        }
+        preferencesByDriver[p.user_id][p.pref_key] = parsePreferenceValue(
+          p.value_type,
+          p.value,
+        );
+      }
+    }
+
+    // Attach driverPreferences to each trayecto
+    const trayectosWithPreferences = trayectos.map((t) => ({
+      ...t,
+      driverPreferences: preferencesByDriver[t.conductor] || {},
+    }));
+
+    return res
+      .status(200)
+      .send({ status: "Success", trayectos: trayectosWithPreferences });
+  } catch (error) {
+    console.error("Error en getTrayectos:", error);
+    return res
+      .status(500)
+      .send({ status: "Error", message: "Error obteniendo trayectos" });
+  }
 }
 
 async function crearTrayecto(req, res) {
@@ -80,7 +156,7 @@ async function crearTrayecto(req, res) {
     });
   }
   if (!req.body.conductor) {
-    req.body.conductor = req.user.username;
+    req.body.conductor = req.user.id;
   }
   const validation = TrayectosSchema.validateTrayectoSinId(req.body);
 
@@ -101,6 +177,7 @@ async function crearTrayecto(req, res) {
     precio,
     routeIndex,
   } = validation.data;
+  let conductor_id = conductor;
   console.log(`El conductor ${conductor} va a crear un trayecto`);
   if (!disponible) {
     disponible = plazas;
@@ -126,7 +203,6 @@ async function crearTrayecto(req, res) {
 
   const provinceForPricing =
     originDetails.province || destinationDetails.province;
-  console.log("ProvinceForPricing", provinceForPricing);
   if (!provinceForPricing) {
     return res.status(400).send({
       status: "Error",
@@ -169,7 +245,6 @@ async function crearTrayecto(req, res) {
   } catch (error) {
     switch (error.code) {
       case "ER_NO_REFERENCED_ROW_2":
-        console.log(error);
         return res
           .status(400)
           .send({ status: "Error", message: "El conductor no existe" });
@@ -190,6 +265,15 @@ async function crearTrayecto(req, res) {
       .status(500)
       .send({ status: "Error", message: "Error al crear el trayecto" });
   }
+
+  // Fetch conductor name to return in response
+  const [userRows] = await connection.query(
+    "SELECT name FROM users WHERE id = ?",
+    [conductor],
+  );
+  const decryptedUser = cryptoMethods.decryptFields(userRows[0], ["name"]);
+  const conductorName = decryptedUser?.name || "Desconocido";
+
   const newTrayecto = {
     id: insertedId,
     origen,
@@ -197,8 +281,8 @@ async function crearTrayecto(req, res) {
     fecha,
     hora,
     plazas,
-    conductor,
-    disponible,
+    conductor: conductorName,
+    conductor_id,
     precio,
   };
 
@@ -245,7 +329,7 @@ async function crearTrayecto(req, res) {
     await createChat({
       name: `Viaje a '${destino}'`,
       trip_id: insertedId,
-      admin_id: req.user?.username,
+      admin_id: req.user?.userId,
       participant_ids: [],
     });
   } catch (error) {
@@ -276,7 +360,6 @@ async function crearTrayecto(req, res) {
 function convertirFechaHoraUTC(fecha, hora) {
   let fechaHoraSQL;
   const fechaHora = new Date(`${fecha.trim()}T${hora.trim()}:00.000Z`);
-  console.log(fechaHora);
   // Formatea a string compatible con SQL DATETIME (YYYY-MM-DD HH:MM:SS)
   fechaHoraSQL = fechaHora.toISOString().slice(0, 19).replace("T", " ");
   return fechaHoraSQL;
@@ -285,16 +368,38 @@ function convertirFechaHoraUTC(fecha, hora) {
 async function obtenerTrayectos(req, res) {
   const connection = await database.getConnection();
   const [rows] = await connection.query("SELECT * FROM trayectos");
-  const username = req.user?.username;
+  const userId = req.user?.id;
+
+  // Obtener detalles de conductores (nombre e imagen) usando sus IDs
+  const conductorIds = [...new Set(rows.map((t) => t.conductor))];
+  const usersMap = new Map();
+
+  if (conductorIds.length > 0) {
+    const placeholders = conductorIds.map(() => "?").join(",");
+    const [users] = await connection.query(
+      `SELECT id, name, img_perfil FROM users WHERE id IN (${placeholders})`,
+      conductorIds,
+    );
+    users.forEach((u) =>
+      usersMap.set(u.id, cryptoMethods.decryptFields(u, ["name"])),
+    );
+  }
+
   const ratedIds = await getRatedTrayectoIdsForUser(
     connection,
-    username,
+    userId,
     rows.map((t) => t.id),
   );
-  const data = rows.map((t) => ({
-    ...t,
-    valorado: ratedIds.has(Number(t.id)),
-  }));
+  const data = rows.map((t) => {
+    const user = usersMap.get(t.conductor);
+    return {
+      ...t,
+      conductor: user?.name || "Desconocido",
+      conductor_id: t.conductor,
+      img_perfil: user?.img_perfil || null,
+      valorado: ratedIds.has(Number(t.id)),
+    };
+  });
   return res.status(200).json(data);
 }
 
@@ -312,49 +417,73 @@ async function obtenerTrayectoPorId(req, res) {
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
   const trayecto = rows[0];
-  const [imgRows] = await connection.query(
-    "SELECT img_perfil FROM users WHERE username = ?",
+  const [userRows] = await connection.query(
+    "SELECT name, img_perfil FROM users WHERE id = ?",
     [trayecto.conductor],
   );
+  const conductorUser = cryptoMethods.decryptFields(userRows[0], ["name"]);
+  const conductorName = conductorUser?.name || "Desconocido";
+  const imgPerfil = conductorUser?.img_perfil;
+
   const fecha = new Date(trayecto.hora).toDateString();
-  console.log(fecha);
   const fechaHora = new Date(trayecto.hora + ".000Z").toISOString();
-  const username = req.user?.username;
-  const valorado = await hasUserRatedTrayecto(
-    connection,
-    username,
-    trayecto.id,
+  const userId = req.user?.id;
+  const valorado = await hasUserRatedTrayecto(connection, userId, trayecto.id);
+
+  // Get driver's preferences
+  let driverPreferences = {};
+  const [preferences] = await connection.query(
+    `SELECT 
+      d.pref_key, 
+      d.value_type, 
+      u.value
+    FROM user_preferences u
+    JOIN preference_definitions d ON u.pref_key = d.pref_key
+    WHERE u.user_id = ? AND d.is_active = 1`,
+    [trayecto.conductor],
   );
+  for (const p of preferences) {
+    driverPreferences[p.pref_key] = parsePreferenceValue(p.value_type, p.value);
+  }
+
   return res.status(200).json({
     ...trayecto,
+    conductor: conductorName,
+    conductor_id: trayecto.conductor,
     hora: fechaHora,
     fecha,
-    img_perfil: imgRows[0]?.img_perfil,
+    img_perfil: imgPerfil,
     valorado,
+    driverPreferences,
   });
 }
 
 async function obtenerTrayectosPorConductor(req, res) {
-  const { username } = req.params;
+  const { id } = req.params;
   const connection = await database.getConnection();
   const [rows] = await connection.query(
     "SELECT * FROM trayectos WHERE conductor = ?",
-    [username],
+    [id],
   );
-  console.log(rows);
   let trayectos = await Promise.all(
     rows.map(async (trayecto) => {
-      const img_perfil = await connection.query(
-        "SELECT img_perfil FROM users WHERE username = ?",
+      const [userRows] = await connection.query(
+        "SELECT name, img_perfil FROM users WHERE id = ?",
         [trayecto.conductor],
       );
-      return { ...trayecto, img_perfil: img_perfil[0][0].img_perfil };
+      const conductorUser = cryptoMethods.decryptFields(userRows[0], ["name"]);
+      return {
+        ...trayecto,
+        conductor: conductorUser?.name || "Desconocido",
+        conductor_id: trayecto.conductor,
+        img_perfil: conductorUser?.img_perfil,
+      };
     }),
   );
-  const currentUsername = req.user?.username;
+  const currentuserId = req.user?.id;
   const ratedIds = await getRatedTrayectoIdsForUser(
     connection,
-    currentUsername,
+    currentuserId,
     trayectos.map((t) => t.id),
   );
   trayectos = trayectos.map((t) => ({
@@ -365,19 +494,32 @@ async function obtenerTrayectosPorConductor(req, res) {
 }
 
 async function obtenerMisTrayectos(req, res) {
-  const { username } = req.user;
+  const { id } = req.user;
   const connection = await database.getConnection();
   const [rows] = await connection.query(
     "SELECT * FROM trayectos WHERE conductor = ?",
-    [username],
+    [id],
   );
+
+  // Obtener mi nombre e imagen (aunque ya los tenga en req.user, para consistencia o datos actualizados)
+  const [userRows] = await connection.query(
+    "SELECT name, img_perfil FROM users WHERE id = ?",
+    [id],
+  );
+  const myUser = cryptoMethods.decryptFields(userRows[0], ["name"]);
+  const myName = myUser?.name || "Yo";
+  const myImg = myUser?.img_perfil;
+
   const ratedIds = await getRatedTrayectoIdsForUser(
     connection,
-    username,
+    id,
     rows.map((t) => t.id),
   );
   const data = rows.map((t) => ({
     ...t,
+    conductor: myName,
+    conductor_id: t.conductor,
+    img_perfil: myImg,
     valorado: ratedIds.has(Number(t.id)),
   }));
   return res.status(200).json(data);
@@ -392,8 +534,8 @@ async function finalizarTrayecto(req, res) {
       .send({ status: "Error", message: "id de trayecto inválido" });
   }
 
-  const username = req.user?.username;
-  if (!username) {
+  const userId = req.user?.userId;
+  if (!userId) {
     return res.status(401).send({ status: "Error", message: "No autenticado" });
   }
 
@@ -409,7 +551,7 @@ async function finalizarTrayecto(req, res) {
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
 
-  if (trayecto.conductor !== username) {
+  if (trayecto.conductor !== userId) {
     return res.status(401).send({
       status: "Error",
       message: "No eres el conductor de este trayecto",
@@ -459,7 +601,6 @@ async function actualizarTrayecto(req, res) {
   }
 
   const data = validation.data;
-  console.log(data);
   const connection = await database.getConnection();
 
   // Check if there are any fields to update
@@ -530,7 +671,6 @@ async function actualizarTrayecto(req, res) {
 
 async function patchTrayecto(req, res) {
   const { id } = req.params;
-  console.log(req.body);
   const validation = TrayectosSchema.validateTrayectoSinId(req.body);
   if (!validation.success) {
     return res
@@ -550,7 +690,6 @@ async function patchTrayecto(req, res) {
 
   const connection = await database.getConnection();
   let fechaHora = convertirFechaHoraUTC(fecha, hora);
-  console.log(fechaHora);
 
   const originalTrayect = await connection.query(
     "SELECT * FROM trayectos WHERE id = ?",
@@ -628,7 +767,6 @@ async function buscarTrayectos(req, res) {
     );
     const offset = (page - 1) * limit;
     const { origin, destination, date, passengers } = req.query;
-    console.log(origin, destination, date, passengers);
     const o = (origin ?? "").toString().trim();
     const d = (destination ?? "").toString().trim();
     const f = (date ?? "").toString().trim();
@@ -722,7 +860,6 @@ async function buscarTrayectos(req, res) {
     ];
 
     const [rows] = await connection.query(baseSQL, baseParams);
-    console.log(rows);
     const haversineKm = (lat1, lon1, lat2, lon2) => {
       const dLat = toRad(lat2 - lat1);
       const dLon = toRad(lon2 - lon1);
@@ -757,19 +894,28 @@ async function buscarTrayectos(req, res) {
 
     let trayectosConImagen = await Promise.all(
       pageSlice.map(async (trayecto) => {
-        const [imgRows] = await connection.query(
-          "SELECT img_perfil FROM users WHERE username = ?",
+        const [userRows] = await connection.query(
+          "SELECT name, img_perfil FROM users WHERE id = ?",
           [trayecto.conductor],
         );
-        const img_perfil = imgRows[0]?.img_perfil || null;
-        return { ...trayecto, img_perfil };
+        const conductorUser = cryptoMethods.decryptFields(userRows[0], [
+          "name",
+        ]);
+        const img_perfil = conductorUser?.img_perfil || null;
+        const name = conductorUser?.name || "Desconocido";
+        return {
+          ...trayecto,
+          conductor: name,
+          conductor_id: trayecto.conductor,
+          img_perfil,
+        };
       }),
     );
 
-    const username = req.user?.username;
+    const userId = req.user?.id;
     const ratedIds = await getRatedTrayectoIdsForUser(
       connection,
-      username,
+      userId,
       trayectosConImagen.map((t) => t.id),
     );
     trayectosConImagen = trayectosConImagen.map((t) => ({
@@ -804,7 +950,6 @@ async function updateLatLong(req, res) {
   const [result] = await connection.query(
     "SELECT id,origen, destino FROM trayectos",
   );
-  console.log(result);
   for (let i = 0; i < result.length; i++) {
     const { id, origen, destino } = result[i];
     const originCoords = await GoogleMapsProvider.geocodeAddress(origen);
@@ -850,7 +995,7 @@ async function updateLatLongById(req, res) {
 
 export const TrayectosController = {
   crearTrayecto,
-  obtenerTrayectos,
+  obtenerTrayectos: getTrayectos,
   eliminarTrayecto,
   obtenerTrayectoPorId,
   finalizarTrayecto,

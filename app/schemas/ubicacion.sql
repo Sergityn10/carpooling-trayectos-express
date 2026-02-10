@@ -9,9 +9,9 @@ CREATE TABLE IF NOT EXISTS ubicaciones (
      country TEXT,
      postal_code TEXT,
      type TEXT,
-     username TEXT NOT NULL,
-     FOREIGN KEY(username) REFERENCES users(username),
-     UNIQUE(username, address),
+     user_id INTEGER NOT NULL,
+     FOREIGN KEY(user_id) REFERENCES users(id),
+     UNIQUE(user_id, address),
      CONSTRAINT chk_lat CHECK (lat >= -90 AND lat <= 90),
      CONSTRAINT chk_lng CHECK (lng >= -180 AND lng <= 180)
  );
@@ -27,6 +27,6 @@ CREATE TABLE IF NOT EXISTS ubicaciones (
     country VARCHAR(100),
     postal_code VARCHAR(100),
     type VARCHAR(100),
-    username VARCHAR(500) NOT NULL,
-    FOREIGN KEY (username) REFERENCES users(username),
+    user_id INT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id),
 );
