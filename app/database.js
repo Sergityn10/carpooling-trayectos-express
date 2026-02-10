@@ -44,7 +44,7 @@ const initDatabase = async () => {
     notified_15min INTEGER NOT NULL DEFAULT 0,
     
     -- 8. Clave Foránea
-    FOREIGN KEY (conductor) REFERENCES users(id),
+    FOREIGN KEY (conductor) REFERENCES users(id) ON DELETE CASCADE,
     
     -- 9. Restricción CHECK
     CONSTRAINT chk_plazas CHECK (plazas >= 1 AND plazas <= 4),
@@ -65,8 +65,8 @@ const initDatabase = async () => {
             trip_outcome TEXT NOT NULL DEFAULT 'pending',
             trip_outcome_reason TEXT,
             trip_outcome_at TEXT,
-            FOREIGN KEY (user_id) REFERENCES users(id),
-            FOREIGN KEY (id_trayecto) REFERENCES trayectos(id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (id_trayecto) REFERENCES trayectos(id) ON DELETE CASCADE,
             UNIQUE(user_id, id_trayecto),
             CONSTRAINT chk_reserva_status CHECK (
                 status IN ('pending', 'completed', 'canceled')
@@ -88,9 +88,9 @@ const initDatabase = async () => {
      id_trayecto INTEGER NOT NULL,
      opinion TEXT,
      rating INTEGER,
-     FOREIGN KEY(user_id_commentator) REFERENCES users(id),
-     FOREIGN KEY(user_id_trayect) REFERENCES users(id),
-     FOREIGN KEY(id_trayecto) REFERENCES trayectos(id),
+     FOREIGN KEY(user_id_commentator) REFERENCES users(id) ON DELETE CASCADE,
+     FOREIGN KEY(user_id_trayect) REFERENCES users(id) ON DELETE CASCADE,
+     FOREIGN KEY(id_trayecto) REFERENCES trayectos(id) ON DELETE CASCADE,
      UNIQUE(user_id_commentator, id_trayecto),
      CONSTRAINT chk_opinion_rating CHECK (rating >= 1 AND rating <= 10)
  );
@@ -107,7 +107,7 @@ const initDatabase = async () => {
             postal_code TEXT,
             type TEXT,
             user_id INTEGER NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
             UNIQUE(user_id, address)
         )`,
     `CREATE TRIGGER IF NOT EXISTS trg_reservas_after_delete_completed
