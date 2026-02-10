@@ -9,21 +9,16 @@ async function authenticate(req, res, next) {
       ? authHeader.slice("Bearer ".length).trim()
       : null;
 
-  console.log(req.cookies.access_token);
   const cookieToken = req.cookies.access_token;
 
   const token = bearerToken || cookieToken;
   const tokenSource = bearerToken ? "bearer" : "cookie";
-  console.log(tokenSource);
 
-  console.log(token);
   if (!token) {
-    return res
-      .status(401)
-      .send({
-        status: "Error",
-        message: "No se proporcionó un token de acceso",
-      });
+    return res.status(401).send({
+      status: "Error",
+      message: "No se proporcionó un token de acceso",
+    });
   }
 
   const headers = {};
@@ -53,12 +48,10 @@ async function authenticate(req, res, next) {
     })
     .catch((error) => {
       console.error("Error al validar el token:", error);
-      return res
-        .status(401)
-        .send({
-          status: "Error",
-          message: "No se proporcionó un token de acceso válido",
-        });
+      return res.status(401).send({
+        status: "Error",
+        message: "No se proporcionó un token de acceso válido",
+      });
     });
 }
 

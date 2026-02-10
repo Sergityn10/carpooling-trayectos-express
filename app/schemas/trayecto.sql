@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS trayectos (
      plazas INTEGER NOT NULL,
      disponible INTEGER NOT NULL,
      precio REAL NOT NULL,
-     conductor TEXT NOT NULL,
+     conductor INTEGER NOT NULL,
      routeIndex INTEGER NULL DEFAULT 0,
      status TEXT NOT NULL DEFAULT 'programado',
      origen_lat REAL NULL,
@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS trayectos (
      destino_lat REAL NULL,
      destino_lng REAL NULL,
      notified_15min INTEGER NOT NULL DEFAULT 0,
-     FOREIGN KEY (conductor) REFERENCES users(username),
+     FOREIGN KEY (conductor) REFERENCES users(id),
      CONSTRAINT chk_plazas CHECK (plazas >= 1 AND plazas <= 4),
      CONSTRAINT chk_trayecto_status CHECK (
          status IN ('en curso', 'programado', 'finalizado', 'cancelado')
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS trayectos (
     plazas INT NOT NULL,
     disponible INT NOT NULL,
     precio DECIMAL(10, 2) NOT NULL, -- DECIMAL es más preciso para dinero que REAL
-    conductor VARCHAR(100) NOT NULL,
+    conductor INT NOT NULL,
     routeIndex INT NULL DEFAULT 0,
     status ENUM('en curso', 'programado', 'finalizado', 'cancelado') NOT NULL DEFAULT 'programado',
     origen_lat DECIMAL(10, 8) NULL,
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS trayectos (
     
     -- Relaciones
     CONSTRAINT fk_trayecto_conductor 
-        FOREIGN KEY (conductor) REFERENCES users(username)
+        FOREIGN KEY (conductor) REFERENCES users(id)
         ON DELETE CASCADE ON UPDATE CASCADE,
     
     -- Validaciones

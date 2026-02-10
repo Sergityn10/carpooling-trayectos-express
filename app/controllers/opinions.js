@@ -3,22 +3,16 @@ import { database } from "../database.js";
 const tableName = "comments";
 async function addOpinion(req, res) {
   const validation = ComentarioSchema.validateComentarioSinId(req.body);
-  console.log(req.body);
   if (!validation.success) {
     return res
       .status(400)
       .send({ status: "Error", message: JSON.parse(validation.error.message) });
   }
 
-  const {
-    username_commentator,
-    username_trayect,
-    trayecto_id,
-    opinion,
-    rating,
-  } = validation.data;
+  const { user_id_commentator, user_id_trayect, trayecto_id, opinion, rating } =
+    validation.data;
 
-  if (req.user?.username && req.user.username !== username_commentator) {
+  if (req.user?.id && req.user.id !== user_id_commentator) {
     return res.status(401).send({
       status: "Error",
       message:
@@ -41,13 +35,24 @@ async function addOpinion(req, res) {
     }
 
     const trayecto = trayectoRows[0];
-    const isConductor =
-      typeof trayecto?.conductor === "string" &&
-      trayecto.conductor === username_commentator;
+
+    const [conductorRows] = await connection.query(
+      "SELECT name FROM users WHERE id = ?",
+      [trayecto.conductor],
+    );
+    const conductorName = conductorRows[0]?.name;
+
+    const isConductor = trayecto.conductor === req.user.id;
+
+    const [commentatorRows] = await connection.query(
+      "SELECT id FROM users WHERE id = ?",
+      [user_id_commentator],
+    );
+    const commentatorId = commentatorRows[0]?.id;
 
     const [reservaRows] = await connection.query(
-      "SELECT id_reserva FROM reservas WHERE username = ? AND id_trayecto = ? AND status = 'completed' LIMIT 1",
-      [username_commentator, trayecto_id],
+      "SELECT id_reserva FROM reservas WHERE user_id = ? AND id_trayecto = ? AND status = 'completed' LIMIT 1",
+      [commentatorId, trayecto_id],
     );
 
     const isPasajero = Array.isArray(reservaRows) && reservaRows.length > 0;
@@ -61,9 +66,15 @@ async function addOpinion(req, res) {
     }
 
     if (isConductor) {
+      const [trayectRows] = await connection.query(
+        "SELECT id FROM users WHERE id = ?",
+        [user_id_trayect],
+      );
+      const trayectUserId = trayectRows[0]?.id;
+
       const [pasajeroReservaRows] = await connection.query(
-        "SELECT id_reserva FROM reservas WHERE username = ? AND id_trayecto = ? AND status = 'completed' LIMIT 1",
-        [username_trayect, trayecto_id],
+        "SELECT id_reserva FROM reservas WHERE user_id = ? AND id_trayecto = ? AND status = 'completed' LIMIT 1",
+        [trayectUserId, trayecto_id],
       );
       if (!pasajeroReservaRows || pasajeroReservaRows.length === 0) {
         return res.status(403).send({
@@ -76,8 +87,8 @@ async function addOpinion(req, res) {
     let result;
     try {
       [result] = await connection.query(
-        `INSERT INTO ${tableName} (username_commentator, username_trayect, id_trayecto, opinion, rating) VALUES (?, ?, ?, ?, ?)`,
-        [username_commentator, username_trayect, trayecto_id, opinion, rating],
+        `INSERT INTO ${tableName} (user_id_commentator, user_id_trayect, id_trayecto, opinion, rating) VALUES (?, ?, ?, ?, ?)`,
+        [user_id_commentator, user_id_trayect, trayecto_id, opinion, rating],
       );
     } catch (error) {
       switch (error.code) {
@@ -107,8 +118,8 @@ async function addOpinion(req, res) {
 
     const newOpinion = {
       id: result.insertId,
-      username_commentator,
-      username_trayect,
+      user_id_commentator,
+      user_id_trayect,
       trayecto_id,
       opinion,
       rating,
@@ -128,25 +139,24 @@ async function addOpinion(req, res) {
   }
 }
 
-async function getOpinionByUsernameCommentator(req, res) {
-  const { username } = req.params;
-  console.log("Username de la opinión a buscar:", username);
+async function getOpinionByUserIdCommentator(req, res) {
+  const { userId } = req.params;
+  console.log("userId de la opinión a buscar:", userId);
   try {
     const connection = await database.getConnection();
-    let userExist = await connection.query(
-      `SELECT * FROM users WHERE username = ?`,
-      [username],
-    );
+    let userExist = await connection.query(`SELECT * FROM users WHERE id = ?`, [
+      userId,
+    ]);
     if (userExist[0].length === 0) {
       return res.status(404).send({
         status: "Error",
-        message: `El usuario no existe con username ${username}`,
+        message: `El usuario no existe con userId ${userId}`,
       });
     }
 
     let opinionList = await connection.query(
-      `SELECT * FROM ${tableName} WHERE username_commentator = ?`,
-      [username],
+      `SELECT * FROM ${tableName} WHERE user_id_commentator = ?`,
+      [userId],
     );
 
     opinionList = opinionList[0];
@@ -155,7 +165,7 @@ async function getOpinionByUsernameCommentator(req, res) {
       opinionList,
     });
   } catch (error) {
-    console.error("Error en getOpinionByUsernameCommented:", error);
+    console.error("Error en getOpinionByuserIdCommented:", error);
     return res.status(500).send({
       status: "Error",
       message: "Error en el servidor al obtener opiniones",
@@ -163,24 +173,23 @@ async function getOpinionByUsernameCommentator(req, res) {
   }
 }
 
-async function getOpinionByUsernameTrayect(req, res) {
-  const { username } = req.params;
-  console.log("Username de la opinión a buscar:", username);
+async function getOpinionByUserIdTrayect(req, res) {
+  const { userId } = req.params;
+  console.log("userId de la opinión a buscar:", userId);
   try {
     const connection = await database.getConnection();
-    let userExist = await connection.query(
-      `SELECT * FROM users WHERE username = ?`,
-      [username],
-    );
+    let userExist = await connection.query(`SELECT * FROM users WHERE id = ?`, [
+      userId,
+    ]);
     if (userExist[0].length === 0) {
       return res.status(404).send({
         status: "Error",
-        message: `El usuario no existe con username ${username}`,
+        message: `El usuario no existe con userId ${userId}`,
       });
     }
     let opinionList = await connection.query(
-      `SELECT * FROM ${tableName} WHERE username_trayect = ?`,
-      [username],
+      `SELECT * FROM ${tableName} WHERE user_id_trayect = ?`,
+      [userId],
     );
 
     opinionList = opinionList[0];
@@ -189,7 +198,7 @@ async function getOpinionByUsernameTrayect(req, res) {
       opinionList,
     });
   } catch (error) {
-    console.error("Error en getOpinionByUsernameTrayect:", error);
+    console.error("Error en getOpinionByuserIdTrayect:", error);
     return res.status(500).send({
       status: "Error",
       message: "Error en el servidor al obtener opiniones",
@@ -242,7 +251,6 @@ async function patchComment(req, res) {
   }
 
   const { opinion, rating, id_comment } = validation.data;
-  console.log(typeof id_comment, typeof id);
   if (id_comment !== id) {
     return res.status(400).send({
       status: "Error",
@@ -308,7 +316,7 @@ export const OpinionsController = {
   addOpinion,
   deleteOpinion,
   getOpinionsByTravelId,
-  getOpinionByUsernameCommentator,
-  getOpinionByUsernameTrayect,
+  getOpinionByUserIdCommentator,
+  getOpinionByUserIdTrayect,
   patchComment,
 };
