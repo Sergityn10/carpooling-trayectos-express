@@ -79,7 +79,8 @@ async function getReservaWithTrayecto(connection, idReserva) {
 async function addReserva(req, res) {
   const validation = ReservaSchema.validateReservaSinId(req.body);
 
-  const token = req.cookies.access_token;
+  // const token = req.cookies.access_token;
+  const { token, headers } = getAuthHeaders(req);
   console.log(token);
   if (!validation.success) {
     return res
