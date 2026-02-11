@@ -52,6 +52,7 @@ function getAuthHeaders(req) {
     typeof authHeader === "string" && authHeader.startsWith("Bearer ")
       ? authHeader.slice("Bearer ".length).trim()
       : null;
+  console.log(`Bearer token: ${bearerToken}`);
   const cookieToken = req.cookies?.access_token;
   const token = bearerToken || cookieToken;
   if (!token) return { token: null, headers: {} };
@@ -59,9 +60,11 @@ function getAuthHeaders(req) {
   const headers = {};
   if (bearerToken) {
     headers.Authorization = `Bearer ${token}`;
+    console.log(headers.Authorization);
   } else {
     headers.Cookie = `access_token=${token}`;
   }
+  console.log("Headers de getAuthHeaders", headers);
   return { token, headers };
 }
 
@@ -77,6 +80,7 @@ async function addReserva(req, res) {
   const validation = ReservaSchema.validateReservaSinId(req.body);
 
   const token = req.cookies.access_token;
+  console.log(token);
   if (!validation.success) {
     return res
       .status(400)
@@ -142,6 +146,7 @@ async function addReserva(req, res) {
   user = user[0][0];
 
   const cookieHeaderValue = `access_token=${token}`; // El formato debe ser 'nombre=valor'
+  console.log(`Cookie: ${cookieHeaderValue}`);
   let reserva = {
     user_id: userId,
     trayecto_id,
@@ -225,6 +230,48 @@ async function addReserva(req, res) {
   }
 
   // Unirse al chat del trayecto
+  let totalAmount = trayecto.precio * 100;
+  let checkout_session;
+  try {
+    checkout_session = await fetch(
+      `${USUARIOS_URL}/api/payment/payment-intent/checkout`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: cookieHeaderValue,
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          amount: totalAmount,
+          destination: stripe_account,
+          currency: "eur",
+          description:
+            "Reserva de trayecto: " +
+            trayecto_id +
+            " desde " +
+            trayecto.origen +
+            " hasta " +
+            trayecto.destino,
+          success_url: frontend_url + "trayecto/" + trayecto_id,
+          cancel_url: frontend_url + "trayecto/" + trayecto_id,
+          trayecto_id,
+          id_reserva: duplicado ? reserva.id_reserva : result.insertId,
+        }),
+      },
+    ).then(async (response) => {
+      if (!response.ok) {
+        throw new Error("Error al crear el PaymentIntent en Stripe");
+      }
+      return await response.json();
+    });
+  } catch (error) {
+    return res.status(400).send({
+      status: "Error",
+      message: error.message,
+    });
+  }
   try {
     const { token: authToken, headers } = getAuthHeaders(req);
     if (!authToken) {
@@ -298,48 +345,6 @@ async function addReserva(req, res) {
     });
   }
 
-  let totalAmount = trayecto.precio * 100;
-  let checkout_session;
-  try {
-    checkout_session = await fetch(
-      `${USUARIOS_URL}/api/payment/payment-intent/checkout`,
-      {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: cookieHeaderValue,
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          amount: totalAmount,
-          destination: stripe_account,
-          currency: "eur",
-          description:
-            "Reserva de trayecto: " +
-            trayecto_id +
-            " desde " +
-            trayecto.origen +
-            " hasta " +
-            trayecto.destino,
-          success_url: frontend_url + "trayecto/" + trayecto_id,
-          cancel_url: frontend_url + "trayecto/" + trayecto_id,
-          trayecto_id,
-          id_reserva: duplicado ? reserva.id_reserva : result.insertId,
-        }),
-      },
-    ).then(async (response) => {
-      if (!response.ok) {
-        throw new Error("Error al crear el PaymentIntent en Stripe");
-      }
-      return await response.json();
-    });
-  } catch (error) {
-    return res.status(400).send({
-      status: "Error",
-      message: error.message,
-    });
-  }
   reservaId = duplicado ? reserva.id_reserva : result.insertId;
   try {
     await connection.query(
