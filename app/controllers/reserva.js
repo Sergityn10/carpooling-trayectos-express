@@ -82,6 +82,7 @@ async function addReserva(req, res) {
   // const token = req.cookies.access_token;
   const { token, headers } = getAuthHeaders(req);
   console.log(token);
+  console.log("Bearer token: ", req.headers.authorization);
   if (!validation.success) {
     return res
       .status(400)
