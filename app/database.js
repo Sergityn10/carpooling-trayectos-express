@@ -123,8 +123,8 @@ const initDatabase = async () => {
     `CREATE INDEX IF NOT EXISTS idx_trayectos_hora ON trayectos(hora)`,
     `CREATE INDEX IF NOT EXISTS idx_reservas_trayecto ON reservas(id_trayecto)`,
     `CREATE INDEX IF NOT EXISTS idx_reservas_stripe_checkout_session ON reservas(stripe_checkout_session_id)`,
-    `CREATE INDEX IF NOT EXISTS idx_pagos_checkout_session ON pagos(stripe_checkout_session_id)`,
-    `CREATE INDEX IF NOT EXISTS idx_pagos_payment_intent ON pagos(stripe_payment_intent_id)`,
+    // `CREATE INDEX IF NOT EXISTS idx_pagos_checkout_session ON pagos(stripe_checkout_session_id)`,
+    // `CREATE INDEX IF NOT EXISTS idx_pagos_payment_intent ON pagos(stripe_payment_intent_id)`,
     `CREATE TABLE IF NOT EXISTS preference_definitions (
             pref_key TEXT PRIMARY KEY,
             value_type TEXT NOT NULL,
