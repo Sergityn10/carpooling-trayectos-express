@@ -8,6 +8,7 @@ dotenv.config();
 const USUARIOS_URL = process.env.USUARIOS_URL;
 const MESSAGES_URL = process.env.MESSAGES_URL;
 let frontend_url = process.env.FRONTEND_URL;
+
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 async function getRatedTrayectoIdsForUser(connection, userId, trayectoIds) {
@@ -52,7 +53,6 @@ function getAuthHeaders(req) {
     typeof authHeader === "string" && authHeader.startsWith("Bearer ")
       ? authHeader.slice("Bearer ".length).trim()
       : null;
-  console.log(`Bearer token: ${bearerToken}`);
   const cookieToken = req.cookies?.access_token;
   const token = bearerToken || cookieToken;
   if (!token) return { token: null, headers: {} };
@@ -60,11 +60,9 @@ function getAuthHeaders(req) {
   const headers = {};
   if (bearerToken) {
     headers.Authorization = `Bearer ${token}`;
-    console.log(headers.Authorization);
   } else {
     headers.Cookie = `access_token=${token}`;
   }
-  console.log("Headers de getAuthHeaders", headers);
   return { token, headers };
 }
 
@@ -81,8 +79,6 @@ async function addReserva(req, res) {
 
   // const token = req.cookies.access_token;
   const { token, headers } = getAuthHeaders(req);
-  console.log(token);
-  console.log("Bearer token: ", req.headers.authorization);
   if (!validation.success) {
     return res
       .status(400)
@@ -256,8 +252,8 @@ async function addReserva(req, res) {
             trayecto.origen +
             " hasta " +
             trayecto.destino,
-          success_url: frontend_url + "trayecto/" + trayecto_id,
-          cancel_url: frontend_url + "trayecto/" + trayecto_id,
+          success_url: frontend_url + "/trayecto/" + trayecto_id,
+          cancel_url: frontend_url + "/trayecto/" + trayecto_id,
           trayecto_id,
           id_reserva: duplicado ? reserva.id_reserva : result.insertId,
         }),
