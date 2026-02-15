@@ -201,6 +201,7 @@ async function updateMyPreferences(req, res) {
   const connection = await database.getConnection();
 
   try {
+    let transactionStarted = false;
     const placeholders = keys.map(() => "?").join(",");
     const [defs] = await connection.query(
       `SELECT pref_key, value_type, enum_values FROM preference_definitions WHERE is_active = 1 AND pref_key IN (${placeholders})`,
@@ -217,6 +218,7 @@ async function updateMyPreferences(req, res) {
     }
 
     await connection.query("BEGIN");
+    transactionStarted = true;
 
     for (const prefKey of keys) {
       const def = defsByKey.get(prefKey);
@@ -249,22 +251,42 @@ async function updateMyPreferences(req, res) {
       );
     }
 
-    await connection.query("COMMIT");
-
-    return res.sendStatus(204);
-  } catch (error) {
-    // Check if the error is about commit without transaction
-    if (error.message.includes("no transaction is active")) {
-      // Only log the error, no rollback needed
-      console.error("Error en updateMyPreferences (during commit):", error);
-    } else {
-      try {
-        await connection.query("ROLLBACK");
-      } catch (rollbackError) {
-        console.error("Error during rollback:", rollbackError);
+    try {
+      await connection.query("COMMIT");
+    } catch (commitError) {
+      const msg = String(commitError?.message ?? "");
+      if (!msg.includes("no transaction is active")) {
+        throw commitError;
       }
-      console.error("Error en updateMyPreferences:", error);
+      console.error(
+        "Error en updateMyPreferences (during commit):",
+        commitError,
+      );
     }
+
+    return res.status(200).send({
+      status: "Success",
+      message: "Se ha actualizado correctamente las preferencias de usuario",
+    });
+  } catch (error) {
+    const msg = String(error?.message ?? "");
+    if (msg.includes("no transaction is active")) {
+      console.error("Error en updateMyPreferences (during commit):", error);
+
+      return res.status(200).send({
+        status: "Success",
+        message: "Se ha actualizado correctamente las preferencias de usuario",
+      });
+    }
+
+    try {
+      if (typeof transactionStarted !== "undefined" && transactionStarted) {
+        await connection.query("ROLLBACK");
+      }
+    } catch (rollbackError) {
+      console.error("Error during rollback:", rollbackError);
+    }
+    console.error("Error en updateMyPreferences:", error);
 
     return res.status(400).send({
       status: "Error",

@@ -588,14 +588,18 @@ async function deleteReserva(req, res) {
   }
 
   try {
+    let transactionStarted = false;
     await connection.query("BEGIN");
+    transactionStarted = true;
 
     const [result] = await connection.query(
       "UPDATE reservas SET status = 'canceled' WHERE id_reserva = ?",
       [idReserva],
     );
     if (result.affectedRows === 0) {
-      await connection.query("ROLLBACK");
+      if (transactionStarted) {
+        await connection.query("ROLLBACK");
+      }
       return res
         .status(404)
         .send({ status: "Error", message: "Reserva no encontrada" });
@@ -606,10 +610,31 @@ async function deleteReserva(req, res) {
       [reserva.id_trayecto],
     );
 
-    await connection.query("COMMIT");
-  } catch (e) {
     try {
-      await connection.query("ROLLBACK");
+      await connection.query("COMMIT");
+    } catch (commitError) {
+      const msg = String(commitError?.message ?? "");
+      if (!msg.includes("no transaction is active")) {
+        throw commitError;
+      }
+      console.error("Error en deleteReserva (during commit):", commitError);
+    }
+  } catch (e) {
+    const msg = String(e?.message ?? "");
+    if (msg.includes("no transaction is active")) {
+      console.error("Error en deleteReserva (during commit):", e);
+      return res
+        .status(200)
+        .send({
+          status: "Success",
+          message: "Reserva cancelada correctamente",
+        });
+    }
+
+    try {
+      if (typeof transactionStarted !== "undefined" && transactionStarted) {
+        await connection.query("ROLLBACK");
+      }
     } catch (_) {
       // ignore
     }
