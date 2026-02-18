@@ -144,7 +144,6 @@ async function addReserva(req, res) {
   user = user[0][0];
 
   const cookieHeaderValue = `access_token=${token}`; // El formato debe ser 'nombre=valor'
-  console.log(`Cookie: ${cookieHeaderValue}`);
   let reserva = {
     user_id: userId,
     trayecto_id,
@@ -527,6 +526,14 @@ async function deleteReserva(req, res) {
       .status(404)
       .send({ status: "Error", message: "Reserva no encontrada" });
   }
+  //Comprobar que el usuario que la elimina es el que ha generado la reserva
+  if (Number(reserva.user_id) !== Number(req.user?.userId)) {
+    console.log(reserva.user_id, req.user?.userId);
+    return res.status(401).send({
+      status: "Error",
+      message: "No tienes permiso para eliminar esta reserva",
+    });
+  }
 
   if (String(reserva.status ?? "").toLowerCase() === "canceled") {
     return res
@@ -549,15 +556,14 @@ async function deleteReserva(req, res) {
     }
   }
 
+  const { token, headers } = getAuthHeaders(req);
+  if (!token) {
+    return res.status(401).send({
+      status: "Error",
+      message: "No se proporcionó un token de acceso",
+    });
+  }
   if (paymentIntentId) {
-    const { token, headers } = getAuthHeaders(req);
-    if (!token) {
-      return res.status(401).send({
-        status: "Error",
-        message: "No se proporcionó un token de acceso",
-      });
-    }
-
     try {
       const response = await fetch(
         `${USUARIOS_URL}/api/payment/payment-intent/cancel`,
@@ -574,7 +580,7 @@ async function deleteReserva(req, res) {
       );
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        const msg = body?.message ?? "Error cancelando el PaymentIntent";
+        const msg = body?.message ?? "Error al cancelar el pago";
         return res
           .status(502)
           .send({ status: "Error", message: msg, details: body ?? undefined });
@@ -582,7 +588,8 @@ async function deleteReserva(req, res) {
     } catch (e) {
       return res.status(502).send({
         status: "Error",
-        message: e?.message ?? "Error llamando a Users API",
+        message:
+          e?.message ?? "No se podido completar la eliminacion de la reserva.",
       });
     }
   }
@@ -591,6 +598,32 @@ async function deleteReserva(req, res) {
     let transactionStarted = false;
     await connection.query("BEGIN");
     transactionStarted = true;
+    let trayectoId = reserva.id_trayecto;
+    let getChat = await fetch(
+      `${process.env.MESSAGES_URL}/api/chats/trip/${trayectoId}`,
+      {
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...headers,
+        },
+      },
+    ).then((res) => res.json());
+    console.log(getChat);
+    let chatId = getChat.chat.id;
+    //Eliminar al usuario del chat de grupo
+
+    let leaveChat = await fetch(
+      `${process.env.MESSAGES_URL}/api/chats/${chatId}/leave`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...headers,
+        },
+      },
+    );
 
     const [result] = await connection.query(
       "UPDATE reservas SET status = 'canceled' WHERE id_reserva = ?",
@@ -623,12 +656,10 @@ async function deleteReserva(req, res) {
     const msg = String(e?.message ?? "");
     if (msg.includes("no transaction is active")) {
       console.error("Error en deleteReserva (during commit):", e);
-      return res
-        .status(200)
-        .send({
-          status: "Success",
-          message: "Reserva cancelada correctamente",
-        });
+      return res.status(200).send({
+        status: "Success",
+        message: "Reserva cancelada correctamente",
+      });
     }
 
     try {

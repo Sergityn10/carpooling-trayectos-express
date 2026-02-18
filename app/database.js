@@ -154,6 +154,27 @@ const initDatabase = async () => {
         ('luggage_size', 'enum', 'medio', '["pequeno","medio","grande"]', 'Tamaño de equipaje admitido'),
         ('stops_allowed', 'boolean', '0', NULL, 'Permite paradas durante el viaje'),
         ('max_detour_km', 'number', '0', NULL, 'Desvío máximo aceptado (km)')`,
+
+    `CREATE TABLE IF NOT EXISTS frequents_routes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            user_id TEXT NOT NULL,
+            name TEXT,
+            originAddress TEXT NOT NULL,
+            originLat REAL NOT NULL,
+            originLng REAL NOT NULL,
+            destAddress TEXT NOT NULL,
+            destLat REAL NOT NULL,
+            destLng REAL NOT NULL,
+            role TEXT NOT NULL DEFAULT 'DRIVER',
+            seats INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            CHECK (role IN ('PASSENGER', 'DRIVER')),
+            CHECK (seats >= 1)
+        )`,
+
+    `CREATE INDEX IF NOT EXISTS idx_frequents_routes_user_id ON frequents_routes(user_id)`,
   ];
   for (const sql of statements) {
     try {

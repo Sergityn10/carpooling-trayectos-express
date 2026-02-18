@@ -10,8 +10,10 @@ import { OpinionsController } from "./controllers/opinions.js";
 import { PreferencesController } from "./controllers/preferences.js";
 import { utilsAuthentication } from "./utils/authentication.js";
 import { UbicacionesController } from "./controllers/ubicaciones.js";
+import { FrequentRoutesController } from "./controllers/frequents-routes.js";
 import {
   startTrayectoSoonReminderCron,
+  startTrayectoChatCleanupCron,
   startTrayectoStatusCron,
 } from "./cron-jobs.js";
 import { OilPriceProvider } from "./providers/precio-oil.js";
@@ -27,6 +29,11 @@ startTrayectoStatusCron({
 startTrayectoSoonReminderCron({
   schedule: process.env.TRAYECTO_SOON_REMINDER_CRON_SCHEDULE || "*/1 * * * *",
 });
+
+startTrayectoChatCleanupCron({
+  schedule: process.env.TRAYECTO_CHAT_CLEANUP_CRON_SCHEDULE || "0 3 * * *",
+});
+
 let port = process.env.PORT || 4001;
 //Configuracion del puerto del servidor
 app.set("port", port);
@@ -167,10 +174,14 @@ app.get(
     ReservaController.getReservasByTravelId(req, res);
   },
 );
-app.delete("/api/reserva/:id", async (req, res) => {
-  // Llama a la función deleteReserva del controlador de reservas
-  ReservaController.deleteReserva(req, res);
-});
+app.delete(
+  "/api/reserva/:id",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    // Llama a la función deleteReserva del controlador de reservas
+    ReservaController.deleteReserva(req, res);
+  },
+);
 
 app.post(
   "/api/reserva/:id/success",
@@ -264,6 +275,55 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     UbicacionesController.eliminarUbicacion(req, res);
+  },
+);
+
+// FREQUENT ROUTES (plantillas de trayecto)
+app.post(
+  "/api/frequent-routes",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    FrequentRoutesController.createFrequentRoute(req, res);
+  },
+);
+
+app.get(
+  "/api/frequent-routes/me",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    FrequentRoutesController.getMyFrequentRoutes(req, res);
+  },
+);
+
+app.get(
+  "/api/frequent-routes/user_id/:userIdParam",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    FrequentRoutesController.getFrequentRoutesByUser(req, res);
+  },
+);
+
+app.get(
+  "/api/frequent-routes/:id",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    FrequentRoutesController.getFrequentRouteById(req, res);
+  },
+);
+
+app.patch(
+  "/api/frequent-routes/:id",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    FrequentRoutesController.patchFrequentRoute(req, res);
+  },
+);
+
+app.delete(
+  "/api/frequent-routes/:id",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    FrequentRoutesController.deleteFrequentRoute(req, res);
   },
 );
 

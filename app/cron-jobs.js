@@ -6,6 +6,17 @@ import {
   sendTrayectoFinalizadoConfirmacionEmail,
 } from "./utils/mailer.js";
 
+function getMessagesBaseHeaders() {
+  const headers = {
+    "Content-Type": "application/json",
+  };
+  const token = process.env.MESSAGES_SERVICE_TOKEN;
+  if (typeof token === "string" && token.trim()) {
+    headers.Authorization = `Bearer ${token.trim()}`;
+  }
+  return headers;
+}
+
 async function getUserEmailById(connection, userId) {
   if (!userId) return null;
   try {
@@ -17,6 +28,73 @@ async function getUserEmailById(connection, userId) {
     return typeof email === "string" && email.trim() ? email.trim() : null;
   } catch {
     return null;
+  }
+}
+
+async function deleteTrayectoChatIfExists(trayectoId) {
+  const baseUrl = process.env.MESSAGES_URL;
+  if (!baseUrl) return;
+
+  const headers = getMessagesBaseHeaders();
+
+  let chatId = null;
+  try {
+    const chatResponse = await fetch(
+      `${baseUrl}/api/chats/trip/${trayectoId}`,
+      {
+        method: "GET",
+        headers,
+      },
+    );
+
+    if (chatResponse.status === 404) {
+      return;
+    }
+
+    const chatBody = await chatResponse.json().catch(() => null);
+    if (!chatResponse.ok) {
+      throw new Error(
+        chatBody?.message ?? "Error obteniendo chat del trayecto",
+      );
+    }
+
+    chatId = chatBody?.chat?.id ?? chatBody?.id ?? null;
+  } catch (e) {
+    console.error("Error obteniendo chat por trayecto para borrado:", e);
+    return;
+  }
+
+  if (!chatId) return;
+
+  try {
+    const delResponse = await fetch(`${baseUrl}/api/chats/${chatId}`, {
+      method: "DELETE",
+      headers,
+    });
+    if (delResponse.ok || delResponse.status === 404) {
+      return;
+    }
+    const body = await delResponse.json().catch(() => null);
+    throw new Error(
+      body?.message ?? `Error borrando chat (${delResponse.status})`,
+    );
+  } catch (e) {
+    console.error("Error borrando chat del trayecto:", e);
+  }
+}
+
+async function tickCleanupFinalizedTrayectoChats() {
+  const connection = await database.getConnection();
+  const [trayectos] = await connection.query(
+    "SELECT id FROM trayectos WHERE status = 'finalizado' AND datetime(hora, '+2 days') <= datetime('now')",
+  );
+
+  for (const t of trayectos ?? []) {
+    try {
+      await deleteTrayectoChatIfExists(t.id);
+    } catch (e) {
+      console.error("Error en limpieza de chat del trayecto:", e);
+    }
   }
 }
 
@@ -194,6 +272,24 @@ export function startTrayectoSoonReminderCron({
       await tickTrayectosAPuntoDeComenzar();
     } catch (e) {
       console.error("Error en cron de recordatorio <15min:", e);
+    } finally {
+      running = false;
+    }
+  });
+
+  task.start();
+  return task;
+}
+
+export function startTrayectoChatCleanupCron({ schedule = "0 3 * * *" } = {}) {
+  let running = false;
+  const task = cron.schedule(schedule, async () => {
+    if (running) return;
+    running = true;
+    try {
+      await tickCleanupFinalizedTrayectoChats();
+    } catch (e) {
+      console.error("Error en cron de limpieza de chats:", e);
     } finally {
       running = false;
     }
