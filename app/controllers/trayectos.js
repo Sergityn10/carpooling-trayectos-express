@@ -196,15 +196,18 @@ async function crearTrayecto(req, res) {
 
   // Inserta el trayecto en la base de datos
   let result = null;
+  let originDetails;
+  let destinationDetails;
   try {
-    const originDetails =
-      await GoogleMapsProvider.geocodeAddressDetails(origen);
-    const destinationDetails =
+    originDetails = await GoogleMapsProvider.geocodeAddressDetails(origen);
+    destinationDetails =
       await GoogleMapsProvider.geocodeAddressDetails(destino);
   } catch (e) {
-    return res
-      .status(400)
-      .send({ status: "Error", message: "Error al procesar la fecha y hora" });
+    return res.status(400).send({
+      status: "Error",
+      message:
+        "No se ha podido geocodificar las direcciones. Compruebe la apikey de Google Maps ",
+    });
   }
 
   const provinceForPricing =
