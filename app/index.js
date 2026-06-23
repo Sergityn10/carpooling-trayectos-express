@@ -45,6 +45,8 @@ let list_origins = [
   `${process.env.USUARIOS_URL}`,
   `${process.env.FRONTEND_URL}`,
   "http://localhost:5173",
+  "http://localhost:3000",
+  "https://www.youconnext.es",
 ];
 //Middewares
 app.use(express.json());
