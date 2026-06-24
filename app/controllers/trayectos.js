@@ -215,6 +215,9 @@ async function crearTrayecto(req, res) {
       .send({ status: "Error", message: "Error al procesar la fecha y hora" });
   }
 
+  if (!routeIndex) {
+    routeIndex = 0;
+  }
   // Inserta el trayecto en la base de datos
   let result = null;
   let originDetails;
@@ -320,7 +323,7 @@ async function crearTrayecto(req, res) {
         });
       default:
         return res
-          .status(500)
+          .status(400)
           .send({ status: "Error", message: "Error al insertar el trayecto" });
     }
   }
