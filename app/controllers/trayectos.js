@@ -136,6 +136,10 @@ async function getTrayectos(req, res) {
 }
 
 async function crearTrayecto(req, res) {
+  console.log(
+    "[crearTrayecto] Inicio — body recibido:",
+    JSON.stringify(req.body),
+  );
   //Se valida si exite la propiedad fecha
   let date = null;
 
@@ -157,8 +161,16 @@ async function crearTrayecto(req, res) {
   }
   if (!req.body.conductor) {
     req.body.conductor = req.user.id;
+    console.log(
+      "[crearTrayecto] conductor no enviado, usando req.user.id:",
+      req.body.conductor,
+    );
   }
   const validation = TrayectosSchema.validateTrayectoSinId(req.body);
+  console.log(
+    "[crearTrayecto] Validación schema:",
+    validation.success ? "OK" : "FALLO",
+  );
 
   if (!validation.success) {
     return res
@@ -178,17 +190,26 @@ async function crearTrayecto(req, res) {
     routeIndex,
   } = validation.data;
   let conductor_id = conductor;
-  console.log(`El conductor ${conductor} va a crear un trayecto`);
+  console.log(
+    `[crearTrayecto] Conductor ${conductor} crea trayecto: ${origen} -> ${destino} | ${fecha} ${hora} | plazas=${plazas}`,
+  );
   if (!disponible) {
     disponible = plazas;
+    console.log(
+      "[crearTrayecto] disponible no enviado, usando plazas:",
+      disponible,
+    );
   }
+  console.log("[crearTrayecto] Obteniendo conexión a BD...");
   const connection = await database.getConnection();
+  console.log("[crearTrayecto] Conexión BD obtenida");
   // Combina fecha y hora en un solo objeto Date en UTC
   let fechaHoraSQL;
   try {
     fechaHoraSQL = convertirFechaHoraUTC(fecha, hora);
+    console.log("[crearTrayecto] Fecha/hora UTC convertida:", fechaHoraSQL);
   } catch (error) {
-    console.error("Error al procesar la fecha y hora:", error);
+    console.error("[crearTrayecto] Error al procesar la fecha y hora:", error);
     return res
       .status(400)
       .send({ status: "Error", message: "Error al procesar la fecha y hora" });
@@ -199,10 +220,24 @@ async function crearTrayecto(req, res) {
   let originDetails;
   let destinationDetails;
   try {
+    console.log("[crearTrayecto] Geocodificando origen:", origen);
     originDetails = await GoogleMapsProvider.geocodeAddressDetails(origen);
+    console.log(
+      "[crearTrayecto] Origen geocodificado:",
+      JSON.stringify(originDetails),
+    );
+    console.log("[crearTrayecto] Geocodificando destino:", destino);
     destinationDetails =
       await GoogleMapsProvider.geocodeAddressDetails(destino);
+    console.log(
+      "[crearTrayecto] Destino geocodificado:",
+      JSON.stringify(destinationDetails),
+    );
   } catch (e) {
+    console.error(
+      "[crearTrayecto] Error geocodificando direcciones:",
+      e.message,
+    );
     return res.status(400).send({
       status: "Error",
       message:
@@ -212,6 +247,7 @@ async function crearTrayecto(req, res) {
 
   const provinceForPricing =
     originDetails.province || destinationDetails.province;
+  console.log("[crearTrayecto] Provincia para pricing:", provinceForPricing);
   if (!provinceForPricing) {
     return res.status(400).send({
       status: "Error",
@@ -220,13 +256,26 @@ async function crearTrayecto(req, res) {
   }
 
   try {
+    console.log(
+      "[crearTrayecto] Consultando precio gasoil para provincia:",
+      provinceForPricing,
+    );
     const gasoilPrice =
       await OilPriceProvider.getGasoilAveragePriceByProvinciaNombre(
         provinceForPricing,
       );
     precio = Math.ceil(gasoilPrice);
+    console.log(
+      "[crearTrayecto] Precio gasoil obtenido:",
+      gasoilPrice,
+      "-> precio final:",
+      precio,
+    );
   } catch (error) {
-    console.error("Error al calcular el precio por provincia:", error);
+    console.error(
+      "[crearTrayecto] Error al calcular el precio por provincia:",
+      error,
+    );
     return res.status(502).send({
       status: "Error",
       message: "No se pudo calcular el precio del gasoil para el trayecto",
@@ -234,6 +283,7 @@ async function crearTrayecto(req, res) {
   }
 
   try {
+    console.log("[crearTrayecto] Insertando trayecto en BD...");
     [result] = await connection.query(
       "INSERT INTO trayectos (origen, destino, hora, plazas, conductor, disponible, precio, origen_lat, origen_lng, destino_lat, destino_lng, routeIndex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
@@ -252,6 +302,12 @@ async function crearTrayecto(req, res) {
       ],
     );
   } catch (error) {
+    console.error(
+      "[crearTrayecto] Error al insertar en BD. Código:",
+      error.code,
+      "Mensaje:",
+      error.message,
+    );
     switch (error.code) {
       case "ER_NO_REFERENCED_ROW_2":
         return res
@@ -269,6 +325,7 @@ async function crearTrayecto(req, res) {
     }
   }
   const insertedId = result.insertId;
+  console.log("[crearTrayecto] Trayecto insertado con ID:", insertedId);
   if (!insertedId) {
     return res
       .status(500)
@@ -276,12 +333,14 @@ async function crearTrayecto(req, res) {
   }
 
   // Fetch conductor name to return in response
+  console.log("[crearTrayecto] Obteniendo nombre del conductor:", conductor);
   const [userRows] = await connection.query(
     "SELECT name FROM users WHERE id = ?",
     [conductor],
   );
   const decryptedUser = cryptoMethods.decryptFields(userRows[0], ["name"]);
   const conductorName = decryptedUser?.name || "Desconocido";
+  console.log("[crearTrayecto] Nombre conductor:", conductorName);
 
   const newTrayecto = {
     id: insertedId,
@@ -296,6 +355,7 @@ async function crearTrayecto(req, res) {
   };
 
   if (!MESSAGES_URL) {
+    console.error("[crearTrayecto] MESSAGES_URL no configurado — rollback");
     try {
       await connection.query("DELETE FROM trayectos WHERE id = ?", [
         insertedId,
@@ -313,6 +373,10 @@ async function crearTrayecto(req, res) {
   }
 
   try {
+    console.log(
+      "[crearTrayecto] Creando chat en MESSAGES_URL:",
+      `${MESSAGES_URL}/api/chats`,
+    );
     const { headers } = getAuthHeaders(req);
     const baseHeaders = {
       "Content-Type": "application/json",
@@ -341,8 +405,15 @@ async function crearTrayecto(req, res) {
       admin_id: req.user?.userId,
       participant_ids: [],
     });
+    console.log(
+      "[crearTrayecto] Chat creado correctamente para trayecto ID:",
+      insertedId,
+    );
   } catch (error) {
-    console.error("Error creando chat para el trayecto:", error);
+    console.error(
+      "[crearTrayecto] Error creando chat para el trayecto:",
+      error,
+    );
     try {
       await connection.query("DELETE FROM trayectos WHERE id = ?", [
         insertedId,
@@ -359,6 +430,12 @@ async function crearTrayecto(req, res) {
     });
   }
 
+  console.log(
+    "[crearTrayecto] Trayecto creado correctamente. ID:",
+    insertedId,
+    "Precio:",
+    precio,
+  );
   return res.status(201).send({
     status: "Success",
     message: "Trayecto creado correctamente",
