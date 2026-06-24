@@ -583,14 +583,38 @@ async function obtenerTrayectosPorConductor(req, res) {
 }
 
 async function obtenerMisTrayectos(req, res) {
-  const { id } = req.user;
+  const { userId: rawId } = req.user;
+  console.log(
+    "[obtenerMisTrayectos] Inicio — req.user keys:",
+    Object.keys(req.user),
+  );
+  console.log("[obtenerMisTrayectos] rawId:", rawId, "| tipo:", typeof rawId);
+
+  const id = Number(rawId);
+  if (!Number.isFinite(id) || id <= 0) {
+    console.error("[obtenerMisTrayectos] ID de usuario inválido:", rawId);
+    return res.status(400).send({
+      status: "Error",
+      message: "ID de usuario inválido en el token",
+    });
+  }
+
+  console.log("[obtenerMisTrayectos] Obteniendo conexión a BD...");
   const connection = await database.getConnection();
+  console.log("[obtenerMisTrayectos] Conexión BD obtenida");
+
+  console.log("[obtenerMisTrayectos] Consultando trayectos del conductor:", id);
   const [rows] = await connection.query(
     "SELECT * FROM trayectos WHERE conductor = ?",
     [id],
   );
+  console.log("[obtenerMisTrayectos] Trayectos encontrados:", rows.length);
 
   // Obtener mi nombre e imagen (aunque ya los tenga en req.user, para consistencia o datos actualizados)
+  console.log(
+    "[obtenerMisTrayectos] Obteniendo nombre e imagen del usuario:",
+    id,
+  );
   const [userRows] = await connection.query(
     "SELECT name, img_perfil FROM users WHERE id = ?",
     [id],
@@ -598,12 +622,23 @@ async function obtenerMisTrayectos(req, res) {
   const myUser = cryptoMethods.decryptFields(userRows[0], ["name"]);
   const myName = myUser?.name || "Yo";
   const myImg = myUser?.img_perfil;
+  console.log(
+    "[obtenerMisTrayectos] Nombre conductor:",
+    myName,
+    "| Imagen:",
+    myImg || "sin imagen",
+  );
 
+  console.log(
+    "[obtenerMisTrayectos] Obteniendo IDs de trayectos ya valorados por el usuario",
+  );
   const ratedIds = await getRatedTrayectoIdsForUser(
     connection,
     id,
     rows.map((t) => t.id),
   );
+  console.log("[obtenerMisTrayectos] Trayectos valorados:", [...ratedIds]);
+
   const data = rows.map((t) => ({
     ...t,
     conductor: myName,
@@ -611,6 +646,11 @@ async function obtenerMisTrayectos(req, res) {
     img_perfil: myImg,
     valorado: ratedIds.has(Number(t.id)),
   }));
+  console.log(
+    "[obtenerMisTrayectos] Respuesta enviada —",
+    data.length,
+    "trayectos",
+  );
   return res.status(200).json(data);
 }
 
