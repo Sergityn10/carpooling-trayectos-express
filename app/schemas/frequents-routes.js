@@ -1,7 +1,7 @@
 import z from "zod";
 
 const frequentRouteSchema = z.object({
-  id: z.number().int().positive(),
+  id: z.string().uuid(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 

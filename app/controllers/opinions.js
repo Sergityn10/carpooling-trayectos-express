@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { ComentarioSchema } from "../schemas/opinions.js";
 import { database } from "../database.js";
 const tableName = "comments";
@@ -12,7 +13,7 @@ async function addOpinion(req, res) {
   const { user_id_commentator, user_id_trayect, trayecto_id, opinion, rating } =
     validation.data;
 
-  if (req.user?.id && req.user.id !== user_id_commentator) {
+  if (req.user?.id && String(req.user.id) !== String(user_id_commentator)) {
     return res.status(401).send({
       status: "Error",
       message:
@@ -42,7 +43,7 @@ async function addOpinion(req, res) {
     );
     const conductorName = conductorRows[0]?.name;
 
-    const isConductor = trayecto.conductor === req.user.id;
+    const isConductor = String(trayecto.conductor) === String(req.user.id);
 
     const [commentatorRows] = await connection.query(
       "SELECT id FROM users WHERE id = ?",
@@ -84,11 +85,19 @@ async function addOpinion(req, res) {
       }
     }
 
+    const commentId = randomUUID();
     let result;
     try {
       [result] = await connection.query(
-        `INSERT INTO ${tableName} (user_id_commentator, user_id_trayect, id_trayecto, opinion, rating) VALUES (?, ?, ?, ?, ?)`,
-        [user_id_commentator, user_id_trayect, trayecto_id, opinion, rating],
+        `INSERT INTO ${tableName} (id_comment, user_id_commentator, user_id_trayect, id_trayecto, opinion, rating) VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          commentId,
+          user_id_commentator,
+          user_id_trayect,
+          trayecto_id,
+          opinion,
+          rating,
+        ],
       );
     } catch (error) {
       switch (error.code) {
@@ -117,7 +126,7 @@ async function addOpinion(req, res) {
     }
 
     const newOpinion = {
-      id: result.insertId,
+      id: commentId,
       user_id_commentator,
       user_id_trayect,
       trayecto_id,
@@ -240,7 +249,7 @@ async function getOpinionsByTravelId(req, res) {
 
 async function patchComment(req, res) {
   let { id } = req.params;
-  id = parseInt(id);
+  id = String(id);
   console.log("Id de la opinión a actualizar:", id);
 
   const validation = ComentarioSchema.validateComentarioUpdate(req.body);
@@ -251,7 +260,7 @@ async function patchComment(req, res) {
   }
 
   const { opinion, rating, id_comment } = validation.data;
-  if (id_comment !== id) {
+  if (String(id_comment) !== String(id)) {
     return res.status(400).send({
       status: "Error",
       message:

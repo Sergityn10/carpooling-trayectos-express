@@ -1,7 +1,7 @@
 import z from "zod";
 
 const UbicacionSchema = z.object({
-  id: z.number().int().positive(),
+  id: z.string().uuid(),
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
   display_name: z.string().min(2).max(100),
@@ -11,7 +11,7 @@ const UbicacionSchema = z.object({
   country: z.string().min(2).max(100).optional(),
   postal_code: z.string().min(2).max(100).optional(),
   type: z.string().min(2).max(100).optional(),
-  userId: z.number().int().positive(),
+  userId: z.string().min(1),
 });
 const UbicacionSchemaPartial = UbicacionSchema.partial();
 const UbicacionSchemaSinId = UbicacionSchema.omit({ id: true });

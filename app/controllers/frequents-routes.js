@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { database } from "../database.js";
 import { FrequentRoutesSchema } from "../schemas/frequents-routes.js";
 
@@ -36,10 +37,12 @@ async function createFrequentRoute(req, res) {
 
   try {
     const connection = await database.getConnection();
+    const routeId = randomUUID();
     let result;
     try {
       [result] = await connection.query(
         `INSERT INTO ${tableName} (
+          id,
           user_id,
           name,
           originAddress,
@@ -50,8 +53,9 @@ async function createFrequentRoute(req, res) {
           destLng,
           role,
           seats
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
+          routeId,
           user_id,
           name ?? null,
           originAddress,
@@ -90,7 +94,7 @@ async function createFrequentRoute(req, res) {
       status: "Success",
       message: "Ruta frecuente creada correctamente",
       frequentRoute: {
-        id: result.insertId,
+        id: routeId,
         user_id,
         name: name ?? null,
         originAddress,
@@ -160,8 +164,8 @@ async function getFrequentRouteById(req, res) {
     return res.status(401).send({ status: "Error", message: "No autenticado" });
   }
 
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id) || id <= 0) {
+  const id = String(req.params.id);
+  if (!id) {
     return res.status(400).send({ status: "Error", message: "id inválido" });
   }
 
@@ -192,8 +196,8 @@ async function patchFrequentRoute(req, res) {
     return res.status(401).send({ status: "Error", message: "No autenticado" });
   }
 
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id) || id <= 0) {
+  const id = String(req.params.id);
+  if (!id) {
     return res.status(400).send({ status: "Error", message: "id inválido" });
   }
 
@@ -275,8 +279,8 @@ async function deleteFrequentRoute(req, res) {
     return res.status(401).send({ status: "Error", message: "No autenticado" });
   }
 
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id) || id <= 0) {
+  const id = String(req.params.id);
+  if (!id) {
     return res.status(400).send({ status: "Error", message: "id inválido" });
   }
 

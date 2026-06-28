@@ -2,14 +2,14 @@ import z from "zod";
 const horaRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
 
 const trayectSchema = z.object({
-  id: z.number().int().positive(),
+  id: z.string().uuid(),
   origen: z.string().min(2).max(100),
   destino: z.string().min(2).max(100),
   fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   hora: z.string().min(5).max(5).regex(horaRegex),
   plazas: z.number().min(1).max(7),
   precio: z.number().min(0),
-  conductor: z.number().int().positive(),
+  conductor: z.string().min(1),
   disponible: z.number().int().min(0).max(7).optional(),
   routeIndex: z.number().int().optional(),
 });

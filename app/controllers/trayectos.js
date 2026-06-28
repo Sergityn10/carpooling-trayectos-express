@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { database } from "../database.js";
 import { GoogleMapsProvider } from "../providers/google-maps.js";
 import { OilPriceProvider } from "../providers/precio-oil.js";
@@ -44,20 +45,16 @@ async function hasUserRatedTrayecto(connection, userId, trayectoId) {
 async function getRatedTrayectoIdsForUser(connection, userId, trayectoIds) {
   if (!userId) return new Set();
   const ids = (trayectoIds ?? [])
-    .map((x) => Number(x))
-    .filter((x) => Number.isFinite(x));
+    .map((x) => String(x))
+    .filter((x) => x.length > 0);
   if (ids.length === 0) return new Set();
 
   const placeholders = ids.map(() => "?").join(",");
   const [rows] = await connection.query(
     `SELECT DISTINCT id_trayecto FROM comments WHERE user_id_commentator = ? AND id_trayecto IN (${placeholders})`,
-    [userId, ...ids],
+    [String(userId), ...ids],
   );
-  return new Set(
-    (rows ?? [])
-      .map((r) => Number(r.id_trayecto))
-      .filter((x) => Number.isFinite(x)),
-  );
+  return new Set((rows ?? []).map((r) => String(r.id_trayecto)));
 }
 
 function parsePreferenceValue(valueType, raw) {
@@ -285,11 +282,16 @@ async function crearTrayecto(req, res) {
     });
   }
 
+  const trayectoId = randomUUID();
   try {
-    console.log("[crearTrayecto] Insertando trayecto en BD...");
+    console.log(
+      "[crearTrayecto] Insertando trayecto en BD con UUID:",
+      trayectoId,
+    );
     [result] = await connection.query(
-      "INSERT INTO trayectos (origen, destino, hora, plazas, conductor, disponible, precio, origen_lat, origen_lng, destino_lat, destino_lng, routeIndex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO trayectos (id, origen, destino, hora, plazas, conductor, disponible, precio, origen_lat, origen_lng, destino_lat, destino_lng, routeIndex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
+        trayectoId,
         origen,
         destino,
         fechaHoraSQL,
@@ -327,9 +329,9 @@ async function crearTrayecto(req, res) {
           .send({ status: "Error", message: "Error al insertar el trayecto" });
     }
   }
-  const insertedId = result.insertId;
+  const insertedId = trayectoId;
   console.log("[crearTrayecto] Trayecto insertado con ID:", insertedId);
-  if (!insertedId) {
+  if (!result || result.affectedRows === 0) {
     return res
       .status(500)
       .send({ status: "Error", message: "Error al crear el trayecto" });
@@ -486,7 +488,7 @@ async function obtenerTrayectos(req, res) {
       conductor: user?.name || "Desconocido",
       conductor_id: t.conductor,
       img_perfil: user?.img_perfil || null,
-      valorado: ratedIds.has(Number(t.id)),
+      valorado: ratedIds.has(String(t.id)),
     };
   });
   return res.status(200).json(data);
@@ -577,7 +579,7 @@ async function obtenerTrayectosPorConductor(req, res) {
   );
   trayectos = trayectos.map((t) => ({
     ...t,
-    valorado: ratedIds.has(Number(t.id)),
+    valorado: ratedIds.has(String(t.id)),
   }));
   return res.status(200).json(trayectos);
 }
@@ -590,8 +592,8 @@ async function obtenerMisTrayectos(req, res) {
   );
   console.log("[obtenerMisTrayectos] rawId:", rawId, "| tipo:", typeof rawId);
 
-  const id = Number(rawId);
-  if (!Number.isFinite(id) || id <= 0) {
+  const id = String(rawId);
+  if (!id || id === "undefined" || id === "null") {
     console.error("[obtenerMisTrayectos] ID de usuario inválido:", rawId);
     return res.status(400).send({
       status: "Error",
@@ -644,7 +646,7 @@ async function obtenerMisTrayectos(req, res) {
     conductor: myName,
     conductor_id: t.conductor,
     img_perfil: myImg,
-    valorado: ratedIds.has(Number(t.id)),
+    valorado: ratedIds.has(String(t.id)),
   }));
   console.log(
     "[obtenerMisTrayectos] Respuesta enviada —",
@@ -656,8 +658,8 @@ async function obtenerMisTrayectos(req, res) {
 
 async function finalizarTrayecto(req, res) {
   const { id } = req.params;
-  const trayectoId = Number(id);
-  if (!Number.isFinite(trayectoId) || trayectoId <= 0) {
+  const trayectoId = String(id);
+  if (!trayectoId) {
     return res
       .status(400)
       .send({ status: "Error", message: "id de trayecto inválido" });
@@ -680,7 +682,7 @@ async function finalizarTrayecto(req, res) {
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
 
-  if (trayecto.conductor !== userId) {
+  if (String(trayecto.conductor) !== String(userId)) {
     return res.status(401).send({
       status: "Error",
       message: "No eres el conductor de este trayecto",
@@ -1049,7 +1051,7 @@ async function buscarTrayectos(req, res) {
     );
     trayectosConImagen = trayectosConImagen.map((t) => ({
       ...t,
-      valorado: ratedIds.has(Number(t.id)),
+      valorado: ratedIds.has(String(t.id)),
     }));
 
     return res.status(200).json({

@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { ReservaSchema } from "../schemas/reserva.js";
 import { database } from "../database.js";
 import dotenv from "dotenv";
@@ -14,25 +15,21 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 async function getRatedTrayectoIdsForUser(connection, userId, trayectoIds) {
   if (!userId) return new Set();
   const ids = (trayectoIds ?? [])
-    .map((x) => Number(x))
-    .filter((x) => Number.isFinite(x));
+    .map((x) => String(x))
+    .filter((x) => x.length > 0);
   if (ids.length === 0) return new Set();
 
   const placeholders = ids.map(() => "?").join(",");
   const [rows] = await connection.query(
     `SELECT DISTINCT id_trayecto FROM comments WHERE user_id_commentator = ? AND id_trayecto IN (${placeholders})`,
-    [userId, ...ids],
+    [String(userId), ...ids],
   );
-  return new Set(
-    (rows ?? [])
-      .map((r) => Number(r.id_trayecto))
-      .filter((x) => Number.isFinite(x)),
-  );
+  return new Set((rows ?? []).map((r) => String(r.id_trayecto)));
 }
 
 async function getRatedUserIdsForTrayecto(connection, trayectoId, userIds) {
-  const id = Number(trayectoId);
-  if (!Number.isFinite(id)) return new Set();
+  const id = String(trayectoId);
+  if (!id) return new Set();
 
   const users = (userIds ?? [])
     .map((u) => (typeof u === "string" ? u.trim() : ""))
@@ -163,13 +160,12 @@ async function addReserva(req, res) {
   // Inserta la reserva en la base de datos
   let result = null;
   let duplicado = false;
-  let reservaId = null;
+  let reservaId = randomUUID();
   try {
     [result] = await connection.query(
-      "INSERT INTO reservas (user_id, id_trayecto, status) VALUES (?, ?, ?)",
-      [userId, trayecto_id, reserva.status],
+      "INSERT INTO reservas (id_reserva, user_id, id_trayecto, status) VALUES (?, ?, ?, ?)",
+      [reservaId, userId, trayecto_id, reserva.status],
     );
-    reservaId = result?.insertId ?? null;
   } catch (error) {
     switch (error.code) {
       case "ER_NO_REFERENCED_ROW_2":
@@ -254,7 +250,7 @@ async function addReserva(req, res) {
           success_url: frontend_url + "/trayecto/" + trayecto_id,
           cancel_url: frontend_url + "/trayecto/" + trayecto_id,
           trayecto_id,
-          id_reserva: duplicado ? reserva.id_reserva : result.insertId,
+          id_reserva: duplicado ? reserva.id_reserva : reservaId,
         }),
       },
     ).then(async (response) => {
@@ -342,7 +338,7 @@ async function addReserva(req, res) {
     });
   }
 
-  reservaId = duplicado ? reserva.id_reserva : result.insertId;
+  reservaId = duplicado ? reserva.id_reserva : reservaId;
   try {
     await connection.query(
       "UPDATE reservas SET stripe_checkout_session_id = ? WHERE id_reserva = ?",
@@ -440,8 +436,8 @@ async function obtenerMisReservas(req, res) {
   const { userId } = req.user;
   const { userIdParam } = req.params;
 
-  if (userId !== Number(userIdParam)) {
-    console.log(typeof user.id, userIdParam);
+  if (String(userId) !== String(userIdParam)) {
+    console.log(typeof userId, userIdParam);
     return res.status(401).send({
       status: "Error",
       message: "No tienes permiso para ver las reservas de este usuario",
@@ -469,7 +465,7 @@ async function obtenerMisReservas(req, res) {
   );
   pasajerosList = pasajerosList.map((r) => ({
     ...r,
-    valorado: ratedTrayectoIds.has(Number(r.id_trayecto)),
+    valorado: ratedTrayectoIds.has(String(r.id_trayecto)),
   }));
 
   pasajerosList = await Promise.all(
@@ -506,8 +502,8 @@ async function obtenerMisReservas(req, res) {
 
 async function deleteReserva(req, res) {
   const { id } = req.params;
-  const idReserva = Number(id);
-  if (!Number.isFinite(idReserva) || idReserva <= 0) {
+  const idReserva = String(id);
+  if (!idReserva) {
     return res
       .status(400)
       .send({ status: "Error", message: "id de reserva inválido" });
@@ -527,7 +523,7 @@ async function deleteReserva(req, res) {
       .send({ status: "Error", message: "Reserva no encontrada" });
   }
   //Comprobar que el usuario que la elimina es el que ha generado la reserva
-  if (Number(reserva.user_id) !== Number(req.user?.userId)) {
+  if (String(reserva.user_id) !== String(req.user?.userId)) {
     console.log(reserva.user_id, req.user?.userId);
     return res.status(401).send({
       status: "Error",
@@ -682,8 +678,8 @@ async function deleteReserva(req, res) {
 
 async function confirmarViajeExitoso(req, res) {
   const { id } = req.params;
-  const idReserva = Number(id);
-  if (!Number.isFinite(idReserva) || idReserva <= 0) {
+  const idReserva = String(id);
+  if (!idReserva) {
     return res
       .status(400)
       .send({ status: "Error", message: "id de reserva inválido" });
@@ -704,7 +700,7 @@ async function confirmarViajeExitoso(req, res) {
   }
 
   const userId = req.user?.userId;
-  const isAllowed = userId && userId !== reserva.conductor;
+  const isAllowed = userId && String(userId) !== String(reserva.conductor);
   if (!isAllowed) {
     return res.status(401).send({
       status: "Error",
@@ -814,8 +810,8 @@ async function confirmarViajeExitoso(req, res) {
 
 async function reclamarViaje(req, res) {
   const { id } = req.params;
-  const idReserva = Number(id);
-  if (!Number.isFinite(idReserva) || idReserva <= 0) {
+  const idReserva = String(id);
+  if (!idReserva) {
     return res
       .status(400)
       .send({ status: "Error", message: "id de reserva inválido" });
@@ -838,7 +834,7 @@ async function reclamarViaje(req, res) {
   }
 
   const userId = req.user?.id;
-  const isAllowed = userId && userId === reserva.conductor;
+  const isAllowed = userId && String(userId) === String(reserva.conductor);
   if (!isAllowed) {
     return res.status(401).send({
       status: "Error",

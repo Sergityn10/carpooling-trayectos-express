@@ -1,10 +1,10 @@
 import z from "zod";
 
 const comentarioSchema = z.object({
-  id_comment: z.number().int().positive(),
-  user_id_commentator: z.number().int().positive(),
-  user_id_trayect: z.number().int().positive(),
-  trayecto_id: z.number().int().positive(),
+  id_comment: z.string().uuid(),
+  user_id_commentator: z.string().min(1),
+  user_id_trayect: z.string().min(1),
+  trayecto_id: z.string().min(1),
   opinion: z.string().min(1).max(1024),
   rating: z.number().int().min(1).max(10),
 });

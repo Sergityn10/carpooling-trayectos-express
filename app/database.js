@@ -13,51 +13,31 @@ const initDatabase = async () => {
   await client.execute("PRAGMA foreign_keys = ON");
   const statements = [
     `CREATE TABLE IF NOT EXISTS trayectos (
-    -- 1. Clave primaria SERIAL se convierte a INTEGER PRIMARY KEY AUTOINCREMENT
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    
-    -- 2. Cadenas de texto
+    id TEXT PRIMARY KEY,
     origen TEXT NOT NULL,
     destino TEXT NOT NULL,
-    
-    -- 3. TIMESTAMP se convierte a TEXT (formato ISO 8601) o INTEGER (UNIX Epoch)
     hora TEXT NOT NULL,
-    
-    -- 4. Tipos INTEGER
     plazas INTEGER NOT NULL,
     disponible INTEGER NOT NULL,
-    
-    -- 5. Tipos numéricos para precios y coordenadas
     precio REAL NOT NULL,
-    conductor INTEGER NOT NULL,
+    conductor TEXT NOT NULL,
     routeIndex INTEGER NULL DEFAULT 0,
-    
-    -- 6. ENUM simulado con TEXT y DEFAULT
     status TEXT NOT NULL DEFAULT 'programado',
-    
-    -- 7. DECIMAL se convierte a REAL
     origen_lat REAL NULL,
     origen_lng REAL NULL,
     destino_lat REAL NULL,
     destino_lng REAL NULL,
-    
     notified_15min INTEGER NOT NULL DEFAULT 0,
-    
-    -- 8. Clave Foránea
     FOREIGN KEY (conductor) REFERENCES users(id) ON DELETE CASCADE,
-    
-    -- 9. Restricción CHECK
     CONSTRAINT chk_plazas CHECK (plazas >= 1 AND plazas <= 4),
-    
-    -- 10. Restricción CHECK para simular el ENUM 'status'
     CONSTRAINT chk_trayecto_status CHECK (
         status IN ('en curso', 'programado', 'finalizado', 'cancelado')
     )
 );`,
     `CREATE TABLE IF NOT EXISTS reservas (
-            id_reserva INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            id_trayecto INTEGER NOT NULL,
+            id_reserva TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            id_trayecto TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
             stripe_checkout_session_id TEXT,
             stripe_payment_intent_id TEXT,
@@ -82,10 +62,10 @@ const initDatabase = async () => {
     `ALTER TABLE reservas ADD COLUMN trip_outcome_reason TEXT`,
     `ALTER TABLE reservas ADD COLUMN trip_outcome_at TEXT`,
     `CREATE TABLE IF NOT EXISTS comments (
-     id_comment INTEGER PRIMARY KEY AUTOINCREMENT,
+     id_comment TEXT PRIMARY KEY,
      user_id_commentator TEXT NOT NULL,
      user_id_trayect TEXT NOT NULL,
-     id_trayecto INTEGER NOT NULL,
+     id_trayecto TEXT NOT NULL,
      opinion TEXT,
      rating INTEGER,
      FOREIGN KEY(user_id_commentator) REFERENCES users(id) ON DELETE CASCADE,
@@ -93,10 +73,9 @@ const initDatabase = async () => {
      FOREIGN KEY(id_trayecto) REFERENCES trayectos(id) ON DELETE CASCADE,
      UNIQUE(user_id_commentator, id_trayecto),
      CONSTRAINT chk_opinion_rating CHECK (rating >= 1 AND rating <= 10)
- );
-`,
+ );`,
     `CREATE TABLE IF NOT EXISTS ubicaciones (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             lat REAL NOT NULL,
             lng REAL NOT NULL,
             display_name TEXT NOT NULL,
@@ -106,7 +85,7 @@ const initDatabase = async () => {
             country TEXT,
             postal_code TEXT,
             type TEXT,
-            user_id INTEGER NOT NULL,
+            user_id TEXT NOT NULL,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
             UNIQUE(user_id, address)
         )`,
@@ -135,7 +114,7 @@ const initDatabase = async () => {
             CONSTRAINT chk_pref_value_type CHECK (value_type IN ('boolean', 'number', 'text', 'enum'))
         )`,
     `CREATE TABLE IF NOT EXISTS user_preferences (
-            user_id INTEGER NOT NULL,
+            user_id TEXT NOT NULL,
             pref_key TEXT NOT NULL,
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -156,7 +135,7 @@ const initDatabase = async () => {
         ('max_detour_km', 'number', '0', NULL, 'Desvío máximo aceptado (km)')`,
 
     `CREATE TABLE IF NOT EXISTS frequents_routes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             createdAt TEXT NOT NULL DEFAULT (datetime('now')),
             updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
             user_id TEXT NOT NULL,

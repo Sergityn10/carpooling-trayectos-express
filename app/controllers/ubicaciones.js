@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { database } from "../database.js";
 import { UbicacionMethods } from "../schemas/ubicacion.js";
 
@@ -29,12 +30,14 @@ async function crearUbicacion(req, res) {
 
   try {
     const connection = await database.getConnection();
+    const ubicacionId = randomUUID();
     let result;
     try {
       [result] = await connection.query(
-        `INSERT INTO ${tableName} (lat, lng, display_name, address, city, province, country, postal_code, type, user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO ${tableName} (id, lat, lng, display_name, address, city, province, country, postal_code, type, user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
+          ubicacionId,
           lat,
           lng,
           display_name,
@@ -72,7 +75,7 @@ async function crearUbicacion(req, res) {
       status: "Success",
       message: "Ubicación creada correctamente",
       ubicacion: {
-        id: result.insertId,
+        id: ubicacionId,
         lat,
         lng,
         display_name,
@@ -189,7 +192,7 @@ async function actualizarUbicacion(req, res) {
         .status(404)
         .send({ status: "Error", message: "Ubicación no encontrada" });
     }
-    if (req.user?.id && found[0].user_id !== req.user.id) {
+    if (req.user?.id && String(found[0].user_id) !== String(req.user.id)) {
       return res.status(401).send({
         status: "Error",
         message: "No tienes permiso para actualizar esta ubicación",
@@ -239,7 +242,7 @@ async function eliminarUbicacion(req, res) {
         .status(404)
         .send({ status: "Error", message: "Ubicación no encontrada" });
     }
-    if (req.user?.id && found[0].user_id !== req.user.id) {
+    if (req.user?.id && String(found[0].user_id) !== String(req.user.id)) {
       return res.status(401).send({
         status: "Error",
         message: "No tienes permiso para eliminar esta ubicación",
