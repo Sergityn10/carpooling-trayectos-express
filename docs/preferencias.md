@@ -54,9 +54,9 @@ POST /api/users/:userId/preferences/default
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `userId` | string | ID del usuario |
+| Parámetro | Tipo          | Descripción    |
+| --------- | ------------- | -------------- |
+| `userId`  | string (UUID) | ID del usuario |
 
 **Respuesta 201:**
 
@@ -84,7 +84,7 @@ GET /api/preferences/me
 ```json
 {
   "status": "Success",
-  "userId": 5,
+  "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "preferences": {
     "music": true,
     "smoking": false,
@@ -137,10 +137,10 @@ PUT /api/preferences/me
 }
 ```
 
-| Campo | Tipo | Validación |
-|-------|------|------------|
-| Claves | string | Deben existir en `preference_definitions` y estar activas |
-| Valores | string \| number \| boolean \| null | Según el `value_type` de cada preferencia |
+| Campo   | Tipo                                | Validación                                                |
+| ------- | ----------------------------------- | --------------------------------------------------------- |
+| Claves  | string                              | Deben existir en `preference_definitions` y estar activas |
+| Valores | string \| number \| boolean \| null | Según el `value_type` de cada preferencia                 |
 
 **Respuesta 200:**
 
@@ -169,16 +169,16 @@ GET /api/preferences/user_id/:userIdParam
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `userIdParam` | string | ID del usuario (debe coincidir con el autenticado) |
+| Parámetro     | Tipo          | Descripción                                        |
+| ------------- | ------------- | -------------------------------------------------- |
+| `userIdParam` | string (UUID) | ID del usuario (debe coincidir con el autenticado) |
 
 **Respuesta 200:**
 
 ```json
 {
   "status": "Success",
-  "userId": "5",
+  "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "preferences": {
     "music": true,
     "smoking": false

@@ -1,21 +1,13 @@
 import { database } from "../database.js";
+import { UsersAPI } from "../utils/users-api.js";
 import {
   sendTrayectoEnCursoEmail,
   sendTrayectoFinalizadoConfirmacionEmail,
 } from "./mailer.js";
 
-async function getUserEmailById(connection, userId) {
+async function getUserEmailById(userId) {
   if (!userId) return null;
-  try {
-    const [rows] = await connection.query(
-      "SELECT email FROM users WHERE id = ?",
-      [userId],
-    );
-    const email = rows?.[0]?.email;
-    return typeof email === "string" && email.trim() ? email.trim() : null;
-  } catch (e) {
-    return null;
-  }
+  return await UsersAPI.fetchUserEmail(String(userId));
 }
 
 async function notifyTrayectoEnCurso(connection, trayecto) {
@@ -31,7 +23,7 @@ async function notifyTrayectoEnCurso(connection, trayecto) {
   const emails = [];
 
   for (const uid of userIds) {
-    const email = await getUserEmailById(connection, uid);
+    const email = await getUserEmailById(uid);
     if (email) emails.push(email);
   }
 
@@ -57,7 +49,7 @@ async function notifyTrayectoFinalizado(connection, trayecto) {
   const emails = [];
 
   for (const uid of userIds) {
-    const email = await getUserEmailById(connection, uid);
+    const email = await getUserEmailById(uid);
     if (email) emails.push(email);
   }
 

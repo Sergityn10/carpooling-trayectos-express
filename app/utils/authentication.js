@@ -1,18 +1,37 @@
 import dotenv from "dotenv";
+import jwt from "jsonwebtoken";
+import crypto from "crypto";
 dotenv.config();
-const USUARIOS_URL = process.env.USUARIOS_URL;
 
-async function authenticate(req, res, next) {
+const PUBLIC_KEY = process.env.PUBLIC_KEY
+  ? crypto.createPublicKey(
+      process.env.PUBLIC_KEY.replace(/\\n/g, "\n")
+        .split("\n")
+        .filter((line) => line.trim() !== "")
+        .join("\n"),
+    )
+  : null;
+
+function extractToken(req) {
   const authHeader = req.headers.authorization;
   const bearerToken =
     typeof authHeader === "string" && authHeader.startsWith("Bearer ")
       ? authHeader.slice("Bearer ".length).trim()
       : null;
 
-  const cookieToken = req.cookies.access_token;
+  const cookieToken = req.cookies?.access_token;
+  return bearerToken || cookieToken || null;
+}
 
-  const token = bearerToken || cookieToken;
-  const tokenSource = bearerToken ? "bearer" : "cookie";
+function verifyToken(token) {
+  if (!PUBLIC_KEY) {
+    throw new Error("PUBLIC_KEY no configurada en .env");
+  }
+  return jwt.verify(token, PUBLIC_KEY, { algorithms: ["RS256"] });
+}
+
+async function authenticate(req, res, next) {
+  const token = extractToken(req);
 
   if (!token) {
     return res.status(401).send({
@@ -21,85 +40,33 @@ async function authenticate(req, res, next) {
     });
   }
 
-  const headers = {};
-  if (tokenSource === "bearer") {
-    headers.Authorization = `Bearer ${token}`;
-  } else {
-    // Construir el header 'Cookie'
-    const cookieHeaderValue = `access_token=${token}`; // El formato debe ser 'nombre=valor'
-    headers.Cookie = cookieHeaderValue;
-  }
-
-  fetch(`${USUARIOS_URL}/api/auth/validate`, {
-    method: "GET",
-    credentials: "include",
-    headers,
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        const body = await response.json();
-        throw new Error(`${body.message}`);
-      }
-      return response.json();
-    })
-    .then((data) => {
-      req.user = data.data;
-      next();
-    })
-    .catch((error) => {
-      console.error("Error al validar el token:", error);
-      return res.status(401).send({
-        status: "Error",
-        message: "No se proporcionó un token de acceso válido",
-      });
+  try {
+    const decoded = verifyToken(token);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    console.error("Error al validar el token:", error.message);
+    return res.status(401).send({
+      status: "Error",
+      message: "No se proporcionó un token de acceso válido",
     });
+  }
 }
 
 async function tryAuthenticate(req, res, next) {
-  const authHeader = req.headers.authorization;
-  const bearerToken =
-    typeof authHeader === "string" && authHeader.startsWith("Bearer ")
-      ? authHeader.slice("Bearer ".length).trim()
-      : null;
-
-  const cookieToken = req.cookies.access_token;
-
-  const token = bearerToken || cookieToken;
-  const tokenSource = bearerToken ? "bearer" : "cookie";
+  const token = extractToken(req);
 
   if (!token) {
     return next();
   }
 
-  const headers = {};
-  if (tokenSource === "bearer") {
-    headers.Authorization = `Bearer ${token}`;
-  } else {
-    const cookieHeaderValue = `access_token=${token}`;
-    headers.Cookie = cookieHeaderValue;
+  try {
+    const decoded = verifyToken(token);
+    req.user = decoded;
+  } catch (error) {
+    console.error("Error al validar el token:", error.message);
   }
-
-  fetch(`${USUARIOS_URL}/api/auth/validate`, {
-    method: "GET",
-    credentials: "include",
-    headers,
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        return null;
-      }
-      return response.json();
-    })
-    .then((data) => {
-      if (data?.data) {
-        req.user = data.data;
-      }
-      next();
-    })
-    .catch((error) => {
-      console.error("Error al validar el token:", error);
-      next();
-    });
+  next();
 }
 
 export const utilsAuthentication = {

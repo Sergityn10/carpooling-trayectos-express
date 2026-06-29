@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { ReservaSchema } from "../schemas/reserva.js";
 import { database } from "../database.js";
 import dotenv from "dotenv";
-import { methods as cryptoMethods } from "../utils/crypto.js";
+import { UsersAPI } from "../utils/users-api.js";
 
 import Stripe from "stripe";
 dotenv.config();
@@ -105,40 +105,21 @@ async function addReserva(req, res) {
   }
   trayecto = trayecto[0][0];
 
-  // Obtener el user_id del conductor usando su ID para buscar la cuenta de Stripe
-  const [conductorRows] = await connection.query(
-    "SELECT name FROM users WHERE id = ?",
-    [trayecto.conductor],
+  // Obtener el nombre del conductor desde el microservicio de usuarios
+  const conductorInfo = await UsersAPI.fetchUserPublicInfo(
+    String(trayecto.conductor),
   );
-  if (conductorRows.length === 0) {
+  if (!conductorInfo) {
     return res
       .status(404)
       .send({ status: "Error", message: "Conductor no encontrado" });
   }
-  const conductorName = conductorRows[0].name;
+  const conductorName = conductorInfo.name;
 
-  let user = await connection.query("SELECT * FROM users WHERE id = ?", [
-    userId,
-  ]);
-  if (user[0].length === 0) {
-    return res
-      .status(404)
-      .send({ status: "Error", message: "Usuario no encontrado" });
-  }
-  let stripe_account = await connection.query(
-    "SELECT stripe_account_id FROM accounts WHERE user_id = ?",
-    [trayecto.conductor],
+  // Obtener la cuenta de Stripe del conductor desde el microservicio de usuarios
+  let stripe_account = await UsersAPI.fetchUserStripeAccount(
+    String(trayecto.conductor),
   );
-  try {
-    stripe_account = stripe_account[0][0].stripe_account_id;
-  } catch (error) {
-    stripe_account = await connection.query(
-      "SELECT stripe_account FROM users WHERE id = ?",
-      [trayecto.conductor],
-    );
-    stripe_account = stripe_account[0][0].stripe_account;
-  }
-  user = user[0][0];
 
   const cookieHeaderValue = `access_token=${token}`; // El formato debe ser 'nombre=valor'
   let reserva = {
@@ -390,11 +371,9 @@ async function getReservasByTravelId(req, res) {
   }
   pasajerosList = await Promise.all(
     pasajerosList.map(async (pasajero) => {
-      const [userRows] = await connection.query(
-        "SELECT name, img_perfil FROM users WHERE id = ?",
-        [pasajero.user_id],
+      const userInfo = await UsersAPI.fetchUserPublicInfo(
+        String(pasajero.user_id),
       );
-      const userDecrypted = cryptoMethods.decryptFields(userRows[0], ["name"]);
 
       // Fetch user preferences
       const [preferenceRows] = await connection.query(
@@ -405,9 +384,9 @@ async function getReservasByTravelId(req, res) {
 
       return {
         ...pasajero,
-        img_perfil: userDecrypted?.img_perfil,
-        nombre: userDecrypted?.name,
-        preferences: preferences, // Add preferences property
+        img_perfil: userInfo?.img_perfil,
+        nombre: userInfo?.name,
+        preferences: preferences,
       };
     }),
   );
@@ -476,16 +455,13 @@ async function obtenerMisReservas(req, res) {
       );
       const trayecto = trayectoRows[0];
 
-      const [userRows] = await connection.query(
-        "SELECT img_perfil, name FROM users WHERE id = ?",
-        [trayecto.conductor],
+      const conductorInfo = await UsersAPI.fetchUserPublicInfo(
+        String(trayecto.conductor),
       );
-
-      const conductorUser = cryptoMethods.decryptFields(userRows[0], ["name"]);
       const conductorId = trayecto.conductor;
-      trayecto.conductor = conductorUser?.name || "Desconocido";
+      trayecto.conductor = conductorInfo?.name || "Desconocido";
       trayecto.conductor_id = conductorId;
-      trayecto.img_perfil = conductorUser?.img_perfil;
+      trayecto.img_perfil = conductorInfo?.img_perfil;
 
       return {
         ...reserva,

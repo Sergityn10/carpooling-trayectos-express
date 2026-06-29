@@ -18,15 +18,15 @@ POST /api/reserva
 
 ```json
 {
-  "user_id": 8,
-  "trayecto_id": 1
+  "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "trayecto_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
-| Campo | Tipo | Requerido | Validación |
-|-------|------|-----------|------------|
-| `user_id` | number | Sí | Int positivo |
-| `trayecto_id` | number | Sí | Int positivo |
+| Campo         | Tipo          | Requerido | Validación        |
+| ------------- | ------------- | --------- | ----------------- |
+| `user_id`     | string (UUID) | Sí        | UUID del usuario  |
+| `trayecto_id` | string (UUID) | Sí        | UUID del trayecto |
 
 **Respuesta 201:**
 
@@ -35,10 +35,10 @@ POST /api/reserva
   "status": "Success",
   "message": "Reserva creada correctamente",
   "reserva": {
-    "id": 20,
-    "user_id": 8,
+    "id": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "conductorName": "Juan Pérez",
-    "trayecto_id": 1,
+    "trayecto_id": "550e8400-e29b-41d4-a716-446655440000",
     "stripe_checkout_session_id": "cs_test_123"
   },
   "stripe_url": "https://checkout.stripe.com/..."
@@ -65,9 +65,9 @@ GET /api/reserva/userId/:userIdParam
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `userIdParam` | int | ID del usuario (debe coincidir con el usuario autenticado) |
+| Parámetro     | Tipo          | Descripción                                                |
+| ------------- | ------------- | ---------------------------------------------------------- |
+| `userIdParam` | string (UUID) | ID del usuario (debe coincidir con el usuario autenticado) |
 
 **Respuesta 200:**
 
@@ -76,21 +76,21 @@ GET /api/reserva/userId/:userIdParam
   "status": "Success",
   "pasajerosList": [
     {
-      "id_reserva": 20,
-      "user_id": 8,
-      "id_trayecto": 1,
+      "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
       "status": "completed",
       "stripe_checkout_session_id": "cs_test_123",
       "trip_outcome": "pending",
       "valorado": false,
       "trayecto": {
-        "id": 1,
+        "id": "550e8400-e29b-41d4-a716-446655440000",
         "origen": "Madrid",
         "destino": "Toledo",
-        "hora": "2025-01-15 10:00:00",
+        "hora": "2025-01-15T10:00:00.000Z",
         "plazas": 4,
         "conductor": "Juan Pérez",
-        "conductor_id": 5,
+        "conductor_id": "b2c3d4e5-f678-90ab-cdef-123456789012",
         "img_perfil": "https://...",
         "precio": 15
       }
@@ -117,9 +117,9 @@ GET /api/reserva/trayectoId/:travelId
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `travelId` | int | ID del trayecto |
+| Parámetro  | Tipo          | Descripción     |
+| ---------- | ------------- | --------------- |
+| `travelId` | string (UUID) | ID del trayecto |
 
 **Respuesta 200:**
 
@@ -128,9 +128,9 @@ GET /api/reserva/trayectoId/:travelId
   "status": "Success",
   "pasajerosList": [
     {
-      "id_reserva": 20,
-      "user_id": 8,
-      "id_trayecto": 1,
+      "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
       "status": "completed",
       "img_perfil": "https://...",
       "nombre": "Ana López",
@@ -159,9 +159,9 @@ DELETE /api/reserva/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID de la reserva (`id_reserva`) |
+| Parámetro | Tipo          | Descripción                     |
+| --------- | ------------- | ------------------------------- |
+| `id`      | string (UUID) | ID de la reserva (`id_reserva`) |
 
 **Respuesta 200:**
 
@@ -193,9 +193,9 @@ POST /api/reserva/:id/success
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID de la reserva (`id_reserva`) |
+| Parámetro | Tipo          | Descripción                     |
+| --------- | ------------- | ------------------------------- |
+| `id`      | string (UUID) | ID de la reserva (`id_reserva`) |
 
 **Respuesta 200:**
 
@@ -228,9 +228,9 @@ POST /api/reserva/:id/issue
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID de la reserva (`id_reserva`) |
+| Parámetro | Tipo          | Descripción                     |
+| --------- | ------------- | ------------------------------- |
+| `id`      | string (UUID) | ID de la reserva (`id_reserva`) |
 
 **Body (JSON):**
 
@@ -240,9 +240,9 @@ POST /api/reserva/:id/issue
 }
 ```
 
-| Campo | Tipo | Requerido | Validación |
-|-------|------|-----------|------------|
-| `reason` | string | Sí | No vacío |
+| Campo    | Tipo   | Requerido | Validación |
+| -------- | ------ | --------- | ---------- |
+| `reason` | string | Sí        | No vacío   |
 
 **Respuesta 200:**
 

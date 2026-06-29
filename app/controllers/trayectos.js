@@ -4,8 +4,11 @@ import { GoogleMapsProvider } from "../providers/google-maps.js";
 import { OilPriceProvider } from "../providers/precio-oil.js";
 import { TrayectosSchema } from "../schemas/trayecto.js";
 import { DateUtils } from "../utils/date.js";
-import { notifyTrayectoFinalizado } from "../cron-jobs.js";
-import { methods as cryptoMethods } from "../utils/crypto.js";
+import {
+  notifyTrayectoFinalizado,
+  notifyTrayectoEnCurso,
+} from "../cron-jobs.js";
+import { UsersAPI } from "../utils/users-api.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -338,14 +341,10 @@ async function crearTrayecto(req, res) {
       .send({ status: "Error", message: "Error al crear el trayecto" });
   }
 
-  // Fetch conductor name to return in response
+  // Fetch conductor name from users microservice
   console.log("[crearTrayecto] Obteniendo nombre del conductor:", conductor);
-  const [userRows] = await connection.query(
-    "SELECT name FROM users WHERE id = ?",
-    [conductor],
-  );
-  const decryptedUser = cryptoMethods.decryptFields(userRows[0], ["name"]);
-  const conductorName = decryptedUser?.name || "Desconocido";
+  const conductorInfo = await UsersAPI.fetchUserPublicInfo(String(conductor));
+  const conductorName = conductorInfo?.name || "Desconocido";
   console.log("[crearTrayecto] Nombre conductor:", conductorName);
 
   const newTrayecto = {
@@ -462,20 +461,10 @@ async function obtenerTrayectos(req, res) {
   const [rows] = await connection.query("SELECT * FROM trayectos");
   const userId = req.user?.id;
 
-  // Obtener detalles de conductores (nombre e imagen) usando sus IDs
+  // Obtener detalles de conductores (nombre e imagen) desde el microservicio de usuarios
   const conductorIds = [...new Set(rows.map((t) => t.conductor))];
-  const usersMap = new Map();
-
-  if (conductorIds.length > 0) {
-    const placeholders = conductorIds.map(() => "?").join(",");
-    const [users] = await connection.query(
-      `SELECT id, name, img_perfil FROM users WHERE id IN (${placeholders})`,
-      conductorIds,
-    );
-    users.forEach((u) =>
-      usersMap.set(u.id, cryptoMethods.decryptFields(u, ["name"])),
-    );
-  }
+  const usersList = await UsersAPI.fetchUsersByIds(conductorIds);
+  const usersMap = new Map(usersList.map((u) => [u.id, u]));
 
   const ratedIds = await getRatedTrayectoIdsForUser(
     connection,
@@ -509,13 +498,11 @@ async function obtenerTrayectoPorId(req, res) {
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
   const trayecto = rows[0];
-  const [userRows] = await connection.query(
-    "SELECT name, img_perfil FROM users WHERE id = ?",
-    [trayecto.conductor],
+  const conductorInfo = await UsersAPI.fetchUserPublicInfo(
+    String(trayecto.conductor),
   );
-  const conductorUser = cryptoMethods.decryptFields(userRows[0], ["name"]);
-  const conductorName = conductorUser?.name || "Desconocido";
-  const imgPerfil = conductorUser?.img_perfil;
+  const conductorName = conductorInfo?.name || "Desconocido";
+  const imgPerfil = conductorInfo?.img_perfil;
 
   const fecha = new Date(trayecto.hora).toDateString();
   const fechaHora = new Date(trayecto.hora + ".000Z").toISOString();
@@ -559,16 +546,14 @@ async function obtenerTrayectosPorConductor(req, res) {
   );
   let trayectos = await Promise.all(
     rows.map(async (trayecto) => {
-      const [userRows] = await connection.query(
-        "SELECT name, img_perfil FROM users WHERE id = ?",
-        [trayecto.conductor],
+      const conductorInfo = await UsersAPI.fetchUserPublicInfo(
+        String(trayecto.conductor),
       );
-      const conductorUser = cryptoMethods.decryptFields(userRows[0], ["name"]);
       return {
         ...trayecto,
-        conductor: conductorUser?.name || "Desconocido",
+        conductor: conductorInfo?.name || "Desconocido",
         conductor_id: trayecto.conductor,
-        img_perfil: conductorUser?.img_perfil,
+        img_perfil: conductorInfo?.img_perfil,
       };
     }),
   );
@@ -613,18 +598,14 @@ async function obtenerMisTrayectos(req, res) {
   );
   console.log("[obtenerMisTrayectos] Trayectos encontrados:", rows.length);
 
-  // Obtener mi nombre e imagen (aunque ya los tenga en req.user, para consistencia o datos actualizados)
+  // Obtener mi nombre e imagen desde el microservicio de usuarios
   console.log(
     "[obtenerMisTrayectos] Obteniendo nombre e imagen del usuario:",
     id,
   );
-  const [userRows] = await connection.query(
-    "SELECT name, img_perfil FROM users WHERE id = ?",
-    [id],
-  );
-  const myUser = cryptoMethods.decryptFields(userRows[0], ["name"]);
-  const myName = myUser?.name || "Yo";
-  const myImg = myUser?.img_perfil;
+  const myInfo = await UsersAPI.fetchUserPublicInfo(String(id));
+  const myName = myInfo?.name || "Yo";
+  const myImg = myInfo?.img_perfil;
   console.log(
     "[obtenerMisTrayectos] Nombre conductor:",
     myName,
@@ -655,6 +636,117 @@ async function obtenerMisTrayectos(req, res) {
     "trayectos",
   );
   return res.status(200).json(data);
+}
+
+async function obtenerProximosTrayectos(req, res) {
+  const { userId: rawId } = req.user;
+  const id = String(rawId);
+  if (!id || id === "undefined" || id === "null") {
+    return res.status(400).send({
+      status: "Error",
+      message: "ID de usuario inválido en el token",
+    });
+  }
+
+  const connection = await database.getConnection();
+
+  const [rows] = await connection.query(
+    `SELECT t.* FROM trayectos t
+     LEFT JOIN reservas r ON r.id_trayecto = t.id AND r.user_id = ?
+     WHERE (t.conductor = ? OR r.user_id = ?)
+       AND t.hora >= NOW()
+       AND t.hora <= DATE_ADD(NOW(), INTERVAL 2 DAY)
+       AND t.status NOT IN ('finalizado', 'cancelado')
+     ORDER BY t.hora ASC`,
+    [id, id, id],
+  );
+
+  const conductorIds = [...new Set(rows.map((t) => String(t.conductor)))];
+  const usersList = await UsersAPI.fetchUsersByIds(conductorIds);
+  const usersMap = new Map(usersList.map((u) => [u.id, u]));
+
+  const ratedIds = await getRatedTrayectoIdsForUser(
+    connection,
+    id,
+    rows.map((t) => t.id),
+  );
+
+  const data = rows.map((t) => {
+    const conductorInfo = usersMap.get(String(t.conductor));
+    return {
+      ...t,
+      conductor: conductorInfo?.name || "Desconocido",
+      conductor_id: t.conductor,
+      img_perfil: conductorInfo?.img_perfil,
+      valorado: ratedIds.has(String(t.id)),
+    };
+  });
+
+  return res.status(200).json(data);
+}
+
+async function iniciarTrayecto(req, res) {
+  const { id: trayectoId } = req.params;
+  if (!trayectoId || trayectoId === "undefined") {
+    return res
+      .status(400)
+      .send({ status: "Error", message: "id de trayecto inválido" });
+  }
+
+  const userId = req.user?.userId;
+  if (!userId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
+  const connection = await database.getConnection();
+  const [rows] = await connection.query(
+    "SELECT id, origen, destino, hora, conductor, status FROM trayectos WHERE id = ?",
+    [trayectoId],
+  );
+  const trayecto = rows?.[0];
+  if (!trayecto) {
+    return res
+      .status(404)
+      .send({ status: "Error", message: "Trayecto no encontrado" });
+  }
+
+  if (String(trayecto.conductor) !== String(userId)) {
+    return res.status(401).send({
+      status: "Error",
+      message: "No eres el conductor de este trayecto",
+    });
+  }
+
+  const status = String(trayecto.status ?? "").toLowerCase();
+  if (status !== "programado") {
+    return res.status(409).send({
+      status: "Error",
+      message: "El trayecto no está programado",
+    });
+  }
+
+  const [result] = await connection.query(
+    "UPDATE trayectos SET status = 'en curso' WHERE id = ? AND status = 'programado'",
+    [trayectoId],
+  );
+
+  if (!result?.affectedRows) {
+    return res.status(409).send({
+      status: "Error",
+      message: "No se pudo iniciar el trayecto (estado no válido)",
+    });
+  }
+
+  try {
+    await notifyTrayectoEnCurso(connection, trayecto);
+  } catch (e) {
+    console.error("Error notificando trayecto en curso:", e);
+  }
+
+  return res.status(200).send({
+    status: "Success",
+    message: "Trayecto iniciado y notificado correctamente",
+  });
 }
 
 async function finalizarTrayecto(req, res) {
@@ -1026,15 +1118,11 @@ async function buscarTrayectos(req, res) {
 
     let trayectosConImagen = await Promise.all(
       pageSlice.map(async (trayecto) => {
-        const [userRows] = await connection.query(
-          "SELECT name, img_perfil FROM users WHERE id = ?",
-          [trayecto.conductor],
+        const conductorInfo = await UsersAPI.fetchUserPublicInfo(
+          String(trayecto.conductor),
         );
-        const conductorUser = cryptoMethods.decryptFields(userRows[0], [
-          "name",
-        ]);
-        const img_perfil = conductorUser?.img_perfil || null;
-        const name = conductorUser?.name || "Desconocido";
+        const img_perfil = conductorInfo?.img_perfil || null;
+        const name = conductorInfo?.name || "Desconocido";
         return {
           ...trayecto,
           conductor: name,
@@ -1131,11 +1219,13 @@ export const TrayectosController = {
   eliminarTrayecto,
   obtenerTrayectoPorId,
   finalizarTrayecto,
+  iniciarTrayecto,
   actualizarTrayecto,
   patchTrayecto,
   buscarTrayectos,
   obtenerTrayectosPorConductor,
   obtenerMisTrayectos,
+  obtenerProximosTrayectos,
   updateLatLong,
   updateLatLongById,
 };

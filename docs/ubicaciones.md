@@ -30,17 +30,17 @@ POST /api/ubicacion
 }
 ```
 
-| Campo | Tipo | Requerido | Validación |
-|-------|------|-----------|------------|
-| `lat` | number | Sí | -90 a 90 |
-| `lng` | number | Sí | -180 a 180 |
-| `display_name` | string | Sí | min 2, max 100 |
-| `address` | string | Sí | min 2, max 100 |
-| `city` | string | No | min 2, max 100 |
-| `province` | string | No | min 2, max 100 |
-| `country` | string | No | min 2, max 100 |
-| `postal_code` | string | No | min 2, max 100 |
-| `type` | string | No | min 2, max 100 (ej: "home", "work") |
+| Campo          | Tipo   | Requerido | Validación                          |
+| -------------- | ------ | --------- | ----------------------------------- |
+| `lat`          | number | Sí        | -90 a 90                            |
+| `lng`          | number | Sí        | -180 a 180                          |
+| `display_name` | string | Sí        | min 2, max 100                      |
+| `address`      | string | Sí        | min 2, max 100                      |
+| `city`         | string | No        | min 2, max 100                      |
+| `province`     | string | No        | min 2, max 100                      |
+| `country`      | string | No        | min 2, max 100                      |
+| `postal_code`  | string | No        | min 2, max 100                      |
+| `type`         | string | No        | min 2, max 100 (ej: "home", "work") |
 
 **Respuesta 201:**
 
@@ -49,7 +49,7 @@ POST /api/ubicacion
   "status": "Success",
   "message": "Ubicación creada correctamente",
   "ubicacion": {
-    "id": 10,
+    "id": "u1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "lat": 40.4168,
     "lng": -3.7038,
     "display_name": "Mi casa",
@@ -59,7 +59,7 @@ POST /api/ubicacion
     "country": "España",
     "postal_code": "28013",
     "type": "home",
-    "userId": 5
+    "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
   }
 }
 ```
@@ -85,7 +85,7 @@ GET /api/ubicacion
 ```json
 [
   {
-    "id": 10,
+    "id": "u1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "lat": 40.4168,
     "lng": -3.7038,
     "display_name": "Mi casa",
@@ -95,7 +95,7 @@ GET /api/ubicacion
     "country": "España",
     "postal_code": "28013",
     "type": "home",
-    "user_id": 5
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
   }
 ]
 ```
@@ -114,22 +114,22 @@ GET /api/ubicacion/user_id/:userIdParam
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `userIdParam` | string | ID del usuario (debe coincidir con el autenticado) |
+| Parámetro     | Tipo          | Descripción                                        |
+| ------------- | ------------- | -------------------------------------------------- |
+| `userIdParam` | string (UUID) | ID del usuario (debe coincidir con el autenticado) |
 
 **Respuesta 200:**
 
 ```json
 [
   {
-    "id": 10,
+    "id": "u1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "lat": 40.4168,
     "lng": -3.7038,
     "display_name": "Mi casa",
     "address": "Calle Gran Vía 1",
     "city": "Madrid",
-    "user_id": 5
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
   }
 ]
 ```
@@ -152,15 +152,15 @@ GET /api/ubicacion/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID de la ubicación |
+| Parámetro | Tipo          | Descripción        |
+| --------- | ------------- | ------------------ |
+| `id`      | string (UUID) | ID de la ubicación |
 
 **Respuesta 200:**
 
 ```json
 {
-  "id": 10,
+  "id": "u1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "lat": 40.4168,
   "lng": -3.7038,
   "display_name": "Mi casa",
@@ -170,7 +170,7 @@ GET /api/ubicacion/:id
   "country": "España",
   "postal_code": "28013",
   "type": "home",
-  "user_id": 5
+  "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 }
 ```
 
@@ -192,9 +192,9 @@ PUT /api/ubicacion/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID de la ubicación |
+| Parámetro | Tipo          | Descripción        |
+| --------- | ------------- | ------------------ |
+| `id`      | string (UUID) | ID de la ubicación |
 
 **Body (JSON):** Cualquier subconjunto de campos:
 
@@ -227,9 +227,9 @@ DELETE /api/ubicacion/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID de la ubicación |
+| Parámetro | Tipo          | Descripción        |
+| --------- | ------------- | ------------------ |
+| `id`      | string (UUID) | ID de la ubicación |
 
 **Respuesta 200:**
 

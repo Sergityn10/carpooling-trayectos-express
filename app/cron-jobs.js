@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import { database } from "./database.js";
+import { UsersAPI } from "./utils/users-api.js";
 import {
   sendTrayectoAPuntoDeComenzar,
   sendTrayectoEnCursoEmail,
@@ -17,18 +18,9 @@ function getMessagesBaseHeaders() {
   return headers;
 }
 
-async function getUserEmailById(connection, userId) {
+async function getUserEmailById(userId) {
   if (!userId) return null;
-  try {
-    const [rows] = await connection.query(
-      "SELECT email FROM users WHERE id = ?",
-      [userId],
-    );
-    const email = rows?.[0]?.email;
-    return typeof email === "string" && email.trim() ? email.trim() : null;
-  } catch {
-    return null;
-  }
+  return await UsersAPI.fetchUserEmail(String(userId));
 }
 
 async function deleteTrayectoChatIfExists(trayectoId) {
@@ -98,7 +90,7 @@ async function tickCleanupFinalizedTrayectoChats() {
   }
 }
 
-async function notifyTrayectoEnCurso(connection, trayecto) {
+export async function notifyTrayectoEnCurso(connection, trayecto) {
   const [reservas] = await connection.query(
     "SELECT DISTINCT user_id FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
     [trayecto.id],
@@ -111,7 +103,7 @@ async function notifyTrayectoEnCurso(connection, trayecto) {
   const emails = [];
 
   for (const uid of userIds) {
-    const email = await getUserEmailById(connection, uid);
+    const email = await getUserEmailById(uid);
     if (email) emails.push(email);
   }
 
@@ -143,7 +135,7 @@ export async function notifyTrayectoFinalizado(connection, trayecto) {
   const emails = [];
 
   for (const uid of userIds) {
-    const email = await getUserEmailById(connection, uid);
+    const email = await getUserEmailById(uid);
     if (email) emails.push(email);
   }
 
@@ -229,7 +221,7 @@ async function tickTrayectosAPuntoDeComenzar() {
     const emails = [];
 
     for (const uid of userIds) {
-      const email = await getUserEmailById(connection, uid);
+      const email = await getUserEmailById(uid);
       if (email) emails.push(email);
     }
 

@@ -11,6 +11,7 @@ import { PreferencesController } from "./controllers/preferences.js";
 import { utilsAuthentication } from "./utils/authentication.js";
 import { UbicacionesController } from "./controllers/ubicaciones.js";
 import { FrequentRoutesController } from "./controllers/frequents-routes.js";
+import { RecorridosController } from "./controllers/recorridos.js";
 import {
   startTrayectoSoonReminderCron,
   startTrayectoChatCleanupCron,
@@ -81,6 +82,14 @@ app.get(
 );
 
 app.get(
+  "/api/trayecto/proximos",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    TrayectosController.obtenerProximosTrayectos(req, res);
+  },
+);
+
+app.get(
   "/api/trayecto/:id",
   utilsAuthentication.tryAuthenticate,
   async (req, res) => {
@@ -113,6 +122,30 @@ app.post(
   utilsAuthentication.authenticate,
   async (req, res) => {
     TrayectosController.finalizarTrayecto(req, res);
+  },
+);
+
+app.post(
+  "/api/trayecto/:id/iniciar",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    TrayectosController.iniciarTrayecto(req, res);
+  },
+);
+
+app.post(
+  "/api/trayecto/:id/recorrido",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    RecorridosController.guardarUbicacion(req, res);
+  },
+);
+
+app.get(
+  "/api/trayecto/:id/recorrido",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    RecorridosController.obtenerRecorrido(req, res);
   },
 );
 app.get(

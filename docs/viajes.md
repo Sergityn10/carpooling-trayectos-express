@@ -25,12 +25,12 @@ GET /api/trayecto
   "status": "Success",
   "trayectos": [
     {
-      "id": 1,
+      "id": "550e8400-e29b-41d4-a716-446655440000",
       "origen": "Madrid",
       "destino": "Toledo",
-      "hora": "2025-01-15 10:00:00",
+      "hora": "2025-01-15T10:00:00.000Z",
       "plazas": 4,
-      "conductor": 5,
+      "conductor": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "disponible": 3,
       "precio": 15,
       "origen_lat": 40.4168,
@@ -62,14 +62,14 @@ GET /api/trayecto/search
 
 **Query params:**
 
-| Parámetro | Tipo | Requerido | Descripción |
-|-----------|------|-----------|-------------|
-| `origin` | string | Sí | Dirección de origen |
-| `destination` | string | Sí | Dirección de destino |
-| `date` | string | Sí | Fecha en formato `YYYY-MM-DD` |
-| `passengers` | int | Sí | Número de pasajeros (>= 1) |
-| `page` | int | No | Página (por defecto 1) |
-| `limit` | int | No | Elementos por página (por defecto 10, máx 100) |
+| Parámetro     | Tipo   | Requerido | Descripción                                    |
+| ------------- | ------ | --------- | ---------------------------------------------- |
+| `origin`      | string | Sí        | Dirección de origen                            |
+| `destination` | string | Sí        | Dirección de destino                           |
+| `date`        | string | Sí        | Fecha en formato `YYYY-MM-DD`                  |
+| `passengers`  | int    | Sí        | Número de pasajeros (>= 1)                     |
+| `page`        | int    | No        | Página (por defecto 1)                         |
+| `limit`       | int    | No        | Elementos por página (por defecto 10, máx 100) |
 
 **Respuesta 200:**
 
@@ -77,13 +77,13 @@ GET /api/trayecto/search
 {
   "data": [
     {
-      "id": 1,
+      "id": "550e8400-e29b-41d4-a716-446655440000",
       "origen": "Madrid, Centro",
       "destino": "Toledo, Casco",
-      "hora": "2025-01-15 10:00:00",
+      "hora": "2025-01-15T10:00:00.000Z",
       "plazas": 4,
       "conductor": "Juan Pérez",
-      "conductor_id": 5,
+      "conductor_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "img_perfil": "https://...",
       "disponible": 3,
       "precio": 15,
@@ -129,13 +129,13 @@ GET /api/trayecto/mis-trayectos
 ```json
 [
   {
-    "id": 1,
+    "id": "550e8400-e29b-41d4-a716-446655440000",
     "origen": "Madrid",
     "destino": "Toledo",
-    "hora": "2025-01-15 10:00:00",
+    "hora": "2025-01-15T10:00:00.000Z",
     "plazas": 4,
     "conductor": "Juan Pérez",
-    "conductor_id": 5,
+    "conductor_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "img_perfil": "https://...",
     "disponible": 3,
     "precio": 15,
@@ -146,7 +146,39 @@ GET /api/trayecto/mis-trayectos
 
 ---
 
-### 4. Obtener trayecto por ID
+### 4. Obtener próximos trayectos (conductor o pasajero)
+
+```
+GET /api/trayecto/proximos
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Devuelve los trayectos próximos del usuario autenticado (como conductor o pasajero) cuya hora está entre el momento de la petición y las próximas 48 horas. Excluye trayectos finalizados o cancelados. Ordenados por hora ascendente.
+
+**Respuesta 200:**
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "origen": "Madrid",
+    "destino": "Toledo",
+    "hora": "2025-01-15T10:00:00.000Z",
+    "plazas": 4,
+    "conductor": "Juan Pérez",
+    "conductor_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "img_perfil": "https://...",
+    "disponible": 3,
+    "precio": 15,
+    "valorado": false
+  }
+]
+```
+
+---
+
+### 5. Obtener trayecto por ID
 
 ```
 GET /api/trayecto/:id
@@ -158,21 +190,21 @@ GET /api/trayecto/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID del trayecto |
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
 
 **Respuesta 200:**
 
 ```json
 {
-  "id": 1,
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "origen": "Madrid",
   "destino": "Toledo",
   "hora": "2025-01-15T10:00:00.000Z",
   "plazas": 4,
   "conductor": "Juan Pérez",
-  "conductor_id": 5,
+  "conductor_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "img_perfil": "https://...",
   "disponible": 3,
   "precio": 15,
@@ -191,7 +223,7 @@ GET /api/trayecto/:id
 
 ---
 
-### 5. Crear trayecto
+### 6. Crear trayecto
 
 ```
 POST /api/trayecto
@@ -210,24 +242,24 @@ POST /api/trayecto
   "fecha": "2025-01-15",
   "hora": "10:00",
   "plazas": 4,
-  "conductor": 5,
+  "conductor": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "disponible": 4,
   "precio": 0,
   "routeIndex": 0
 }
 ```
 
-| Campo | Tipo | Requerido | Validación |
-|-------|------|-----------|------------|
-| `origen` | string | Sí | min 2, max 100 |
-| `destino` | string | Sí | min 2, max 100 |
-| `fecha` | string | Sí | Formato `YYYY-MM-DD` |
-| `hora` | string | Sí | Formato `HH:MM` (24h) |
-| `plazas` | number | Sí | 1–7 |
-| `conductor` | number | Sí | Int positivo (si no se envía, usa `req.user.id`) |
-| `disponible` | number | No | 0–7 (por defecto = `plazas`) |
-| `precio` | number | Sí | >= 0 (se sobrescribe con cálculo automático) |
-| `routeIndex` | number | No | Int |
+| Campo        | Tipo          | Requerido | Validación                                                 |
+| ------------ | ------------- | --------- | ---------------------------------------------------------- |
+| `origen`     | string        | Sí        | min 2, max 100                                             |
+| `destino`    | string        | Sí        | min 2, max 100                                             |
+| `fecha`      | string        | Sí        | Formato `YYYY-MM-DD`                                       |
+| `hora`       | string        | Sí        | Formato `HH:MM` (24h)                                      |
+| `plazas`     | number        | Sí        | 1–7                                                        |
+| `conductor`  | string (UUID) | Sí        | UUID del conductor (si no se envía, usa `req.user.userId`) |
+| `disponible` | number        | No        | 0–7 (por defecto = `plazas`)                               |
+| `precio`     | number        | Sí        | >= 0 (se sobrescribe con cálculo automático)               |
+| `routeIndex` | number        | No        | Int                                                        |
 
 **Respuesta 201:**
 
@@ -236,14 +268,14 @@ POST /api/trayecto
   "status": "Success",
   "message": "Trayecto creado correctamente",
   "trayecto": {
-    "id": 10,
+    "id": "550e8400-e29b-41d4-a716-446655440000",
     "origen": "Madrid, Calle Gran Vía 1",
     "destino": "Toledo, Plaza Mayor",
     "fecha": "2025-01-15",
     "hora": "10:00",
     "plazas": 4,
     "conductor": "Juan Pérez",
-    "conductor_id": 5,
+    "conductor_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "precio": 15
   }
 }
@@ -257,7 +289,7 @@ POST /api/trayecto
 
 ---
 
-### 6. Actualizar coordenadas de un trayecto por ID
+### 7. Actualizar coordenadas de un trayecto por ID
 
 ```
 PUT /api/trayecto/update/id/:id
@@ -269,15 +301,15 @@ PUT /api/trayecto/update/id/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID del trayecto |
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
 
 **Respuesta 204:** Sin contenido.
 
 ---
 
-### 7. Actualizar coordenadas de todos los trayectos
+### 8. Actualizar coordenadas de todos los trayectos
 
 ```
 PUT /api/trayecto/update
@@ -291,7 +323,7 @@ PUT /api/trayecto/update
 
 ---
 
-### 8. Actualizar trayecto (PUT)
+### 9. Actualizar trayecto (PUT)
 
 ```
 PUT /api/trayecto/:id
@@ -303,9 +335,9 @@ PUT /api/trayecto/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID del trayecto |
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
 
 **Body (JSON):** Cualquier subconjunto de los campos del trayecto:
 
@@ -317,17 +349,17 @@ PUT /api/trayecto/:id
 }
 ```
 
-| Campo | Tipo | Validación |
-|-------|------|------------|
-| `origen` | string | min 2, max 100 |
-| `destino` | string | min 2, max 100 |
-| `fecha` | string | `YYYY-MM-DD` (debe ir con `hora`) |
-| `hora` | string | `HH:MM` (debe ir con `fecha`) |
-| `plazas` | number | 1–7 |
-| `conductor` | number | Int positivo |
-| `disponible` | number | 0–7 |
-| `precio` | number | >= 0 |
-| `routeIndex` | number | Int |
+| Campo        | Tipo          | Validación                        |
+| ------------ | ------------- | --------------------------------- |
+| `origen`     | string        | min 2, max 100                    |
+| `destino`    | string        | min 2, max 100                    |
+| `fecha`      | string        | `YYYY-MM-DD` (debe ir con `hora`) |
+| `hora`       | string        | `HH:MM` (debe ir con `fecha`)     |
+| `plazas`     | number        | 1–7                               |
+| `conductor`  | string (UUID) | UUID del conductor                |
+| `disponible` | number        | 0–7                               |
+| `precio`     | number        | >= 0                              |
+| `routeIndex` | number        | Int                               |
 
 **Respuesta 204:** Sin contenido.
 
@@ -338,7 +370,7 @@ PUT /api/trayecto/:id
 
 ---
 
-### 9. Actualizar trayecto (PATCH)
+### 10. Actualizar trayecto (PATCH)
 
 ```
 PATCH /api/trayecto/:id
@@ -350,9 +382,9 @@ PATCH /api/trayecto/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID del trayecto |
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
 
 **Body (JSON):**
 
@@ -363,7 +395,7 @@ PATCH /api/trayecto/:id
   "fecha": "2025-01-16",
   "hora": "11:00",
   "plazas": 5,
-  "conductor": 5,
+  "conductor": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "precio": 18,
   "routeIndex": 1
 }
@@ -385,7 +417,153 @@ PATCH /api/trayecto/:id
 
 ---
 
-### 10. Finalizar trayecto
+### 11. Iniciar trayecto
+
+```
+POST /api/trayecto/:id/iniciar
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Marca un trayecto con estado `programado` como `en curso`. Solo el conductor del trayecto puede iniciarlo. Envía un email a los pasajeros y al conductor notificando que el trayecto ha comenzado.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "message": "Trayecto iniciado y notificado correctamente"
+}
+```
+
+**Errores:**
+
+- `400` — ID inválido.
+- `401` — No autenticado o no eres el conductor.
+- `404` — Trayecto no encontrado.
+- `409` — El trayecto no está programado.
+
+---
+
+### 12. Guardar ubicación del recorrido
+
+```
+POST /api/trayecto/:id/recorrido
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Registra un punto de ubicación (latitud, longitud y dirección) del usuario autenticado durante un trayecto en curso. El usuario debe ser el conductor o un pasajero con reserva activa. Permite trackear el recorrido en tiempo real.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+
+**Body (JSON):**
+
+```json
+{
+  "lat": 40.4168,
+  "lng": -3.7038,
+  "address": "Calle Gran Vía 1, Madrid"
+}
+```
+
+| Campo     | Tipo   | Requerido | Validación        |
+| --------- | ------ | --------- | ----------------- |
+| `lat`     | number | Sí        | -90 a 90          |
+| `lng`     | number | Sí        | -180 a 180        |
+| `address` | string | Sí        | Dirección legible |
+
+**Respuesta 201:**
+
+```json
+{
+  "status": "Success",
+  "message": "Ubicación guardada correctamente",
+  "recorrido": {
+    "id": "d4e5f6a7-b890-1234-cdef-567890abcdef",
+    "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "lat": 40.4168,
+    "lng": -3.7038,
+    "address": "Calle Gran Vía 1, Madrid"
+  }
+}
+```
+
+**Errores:**
+
+- `400` — ID inválido, o `lat`/`lng`/`address` faltantes o inválidos.
+- `401` — No autenticado.
+- `403` — No formas parte de este trayecto.
+- `404` — Trayecto no encontrado.
+- `409` — El trayecto no está en curso.
+
+---
+
+### 13. Obtener recorrido del trayecto
+
+```
+GET /api/trayecto/:id/recorrido
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Devuelve todos los puntos de ubicación registrados durante un trayecto, ordenados cronológicamente. El usuario debe ser el conductor o un pasajero con reserva activa.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "recorridos": [
+    {
+      "id": "d4e5f6a7-b890-1234-cdef-567890abcdef",
+      "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
+      "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "lat": 40.4168,
+      "lng": -3.7038,
+      "address": "Calle Gran Vía 1, Madrid",
+      "created_at": "2025-01-15T10:05:00.000Z"
+    },
+    {
+      "id": "e5f6a7b8-9012-3456-cdef-7890abcdef12",
+      "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
+      "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "lat": 40.4200,
+      "lng": -3.7100,
+      "address": "Plaza de España, Madrid",
+      "created_at": "2025-01-15T10:10:00.000Z"
+    }
+  ]
+}
+```
+
+**Errores:**
+
+- `400` — ID inválido.
+- `401` — No autenticado.
+- `403` — No formas parte de este trayecto.
+- `404` — Trayecto no encontrado.
+
+---
+
+### 14. Finalizar trayecto
 
 ```
 POST /api/trayecto/:id/finalizar
@@ -397,9 +575,9 @@ POST /api/trayecto/:id/finalizar
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID del trayecto |
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
 
 **Respuesta 200:**
 
@@ -419,7 +597,7 @@ POST /api/trayecto/:id/finalizar
 
 ---
 
-### 11. Obtener trayectos por conductor
+### 15. Obtener trayectos por conductor
 
 ```
 GET /api/trayecto/conductor/:id
@@ -431,22 +609,22 @@ GET /api/trayecto/conductor/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID del conductor |
+| Parámetro | Tipo          | Descripción      |
+| --------- | ------------- | ---------------- |
+| `id`      | string (UUID) | ID del conductor |
 
 **Respuesta 200:**
 
 ```json
 [
   {
-    "id": 1,
+    "id": "550e8400-e29b-41d4-a716-446655440000",
     "origen": "Madrid",
     "destino": "Toledo",
-    "hora": "2025-01-15 10:00:00",
+    "hora": "2025-01-15T10:00:00.000Z",
     "plazas": 4,
     "conductor": "Juan Pérez",
-    "conductor_id": 5,
+    "conductor_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "img_perfil": "https://...",
     "valorado": false
   }
@@ -455,7 +633,7 @@ GET /api/trayecto/conductor/:id
 
 ---
 
-### 12. Eliminar trayecto
+### 16. Eliminar trayecto
 
 ```
 DELETE /api/trayecto/:id
@@ -467,9 +645,9 @@ DELETE /api/trayecto/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID del trayecto |
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
 
 **Respuesta 204:** Sin contenido.
 
@@ -495,21 +673,21 @@ POST /api/comments
 
 ```json
 {
-  "user_id_commentator": 5,
-  "user_id_trayect": 8,
-  "trayecto_id": 1,
+  "user_id_commentator": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "user_id_trayect": "b2c3d4e5-f678-90ab-cdef-123456789012",
+  "trayecto_id": "550e8400-e29b-41d4-a716-446655440000",
   "opinion": "Excelente viaje, muy puntual",
   "rating": 9
 }
 ```
 
-| Campo | Tipo | Requerido | Validación |
-|-------|------|-----------|------------|
-| `user_id_commentator` | number | Sí | Int positivo |
-| `user_id_trayect` | number | Sí | Int positivo |
-| `trayecto_id` | number | Sí | Int positivo |
-| `opinion` | string | Sí | min 1, max 1024 |
-| `rating` | number | Sí | Int 1–10 |
+| Campo                 | Tipo          | Requerido | Validación                 |
+| --------------------- | ------------- | --------- | -------------------------- |
+| `user_id_commentator` | string (UUID) | Sí        | UUID del usuario que opina |
+| `user_id_trayect`     | string (UUID) | Sí        | UUID del usuario valorado  |
+| `trayecto_id`         | string (UUID) | Sí        | UUID del trayecto          |
+| `opinion`             | string        | Sí        | min 1, max 1024            |
+| `rating`              | number        | Sí        | Int 1–10                   |
 
 **Respuesta 201:**
 
@@ -518,10 +696,10 @@ POST /api/comments
   "status": "Success",
   "message": "Opinión creada correctamente",
   "opinion": {
-    "id": 15,
-    "user_id_commentator": 5,
-    "user_id_trayect": 8,
-    "trayecto_id": 1,
+    "id_comment": "c3d4e5f6-7890-abcd-ef12-345678901234",
+    "user_id_commentator": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "user_id_trayect": "b2c3d4e5-f678-90ab-cdef-123456789012",
+    "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
     "opinion": "Excelente viaje, muy puntual",
     "rating": 9
   }
@@ -549,9 +727,9 @@ GET /api/comments/user_id_commentator/:userId
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `userId` | int | ID del usuario comentarista |
+| Parámetro | Tipo          | Descripción                 |
+| --------- | ------------- | --------------------------- |
+| `userId`  | string (UUID) | ID del usuario comentarista |
 
 **Respuesta 200:**
 
@@ -560,10 +738,10 @@ GET /api/comments/user_id_commentator/:userId
   "status": "Success",
   "opinionList": [
     {
-      "id_comment": 15,
-      "user_id_commentator": 5,
-      "user_id_trayect": 8,
-      "id_trayecto": 1,
+      "id_comment": "c3d4e5f6-7890-abcd-ef12-345678901234",
+      "user_id_commentator": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "user_id_trayect": "b2c3d4e5-f678-90ab-cdef-123456789012",
+      "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
       "opinion": "Excelente viaje",
       "rating": 9
     }
@@ -589,9 +767,9 @@ GET /api/comments/user_id_trayect/:userId
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `userId` | int | ID del usuario valorado |
+| Parámetro | Tipo          | Descripción             |
+| --------- | ------------- | ----------------------- |
+| `userId`  | string (UUID) | ID del usuario valorado |
 
 **Respuesta 200:**
 
@@ -600,20 +778,16 @@ GET /api/comments/user_id_trayect/:userId
   "status": "Success",
   "opinionList": [
     {
-      "id_comment": 15,
-      "user_id_commentator": 5,
-      "user_id_trayect": 8,
-      "id_trayecto": 1,
+      "id_comment": "c3d4e5f6-7890-abcd-ef12-345678901234",
+      "user_id_commentator": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "user_id_trayect": "b2c3d4e5-f678-90ab-cdef-123456789012",
+      "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
       "opinion": "Excelente viaje",
       "rating": 9
     }
   ]
 }
 ```
-
-**Errores:**
-
-- `404` — El usuario no existe.
 
 ---
 
@@ -629,9 +803,9 @@ GET /api/comments/travelId/:travelId
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `travelId` | int | ID del trayecto |
+| Parámetro  | Tipo          | Descripción     |
+| ---------- | ------------- | --------------- |
+| `travelId` | string (UUID) | ID del trayecto |
 
 **Respuesta 200:**
 
@@ -640,10 +814,10 @@ GET /api/comments/travelId/:travelId
   "status": "Success",
   "opinionsList": [
     {
-      "id_comment": 15,
-      "user_id_commentator": 5,
-      "user_id_trayect": 8,
-      "id_trayecto": 1,
+      "id_comment": "c3d4e5f6-7890-abcd-ef12-345678901234",
+      "user_id_commentator": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "user_id_trayect": "b2c3d4e5-f678-90ab-cdef-123456789012",
+      "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
       "opinion": "Excelente viaje",
       "rating": 9
     }
@@ -669,25 +843,25 @@ PATCH /api/comments/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID del comentario (`id_comment`) |
+| Parámetro | Tipo          | Descripción                      |
+| --------- | ------------- | -------------------------------- |
+| `id`      | string (UUID) | ID del comentario (`id_comment`) |
 
 **Body (JSON):**
 
 ```json
 {
-  "id_comment": 15,
+  "id_comment": "c3d4e5f6-7890-abcd-ef12-345678901234",
   "opinion": "Buen viaje, pero llegó tarde",
   "rating": 7
 }
 ```
 
-| Campo | Tipo | Requerido | Validación |
-|-------|------|-----------|------------|
-| `id_comment` | number | Sí | Int positivo (debe coincidir con `:id`) |
-| `opinion` | string | Sí | min 1, max 1024 |
-| `rating` | number | Sí | Int 1–10 |
+| Campo        | Tipo          | Requerido | Validación                                     |
+| ------------ | ------------- | --------- | ---------------------------------------------- |
+| `id_comment` | string (UUID) | Sí        | UUID del comentario (debe coincidir con `:id`) |
+| `opinion`    | string        | Sí        | min 1, max 1024                                |
+| `rating`     | number        | Sí        | Int 1–10                                       |
 
 **Respuesta 200:**
 
@@ -696,10 +870,10 @@ PATCH /api/comments/:id
   "status": "Success",
   "message": "Opinión actualizada correctamente",
   "updatedOpinion": {
-    "id_comment": 15,
-    "user_id_commentator": 5,
-    "user_id_trayect": 8,
-    "id_trayecto": 1,
+    "id_comment": "c3d4e5f6-7890-abcd-ef12-345678901234",
+    "user_id_commentator": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "user_id_trayect": "b2c3d4e5-f678-90ab-cdef-123456789012",
+    "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
     "opinion": "Buen viaje, pero llegó tarde",
     "rating": 7
   }
@@ -725,9 +899,9 @@ DELETE /api/comments/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID del comentario (`id_comment`) |
+| Parámetro | Tipo          | Descripción                      |
+| --------- | ------------- | -------------------------------- |
+| `id`      | string (UUID) | ID del comentario (`id_comment`) |
 
 **Respuesta 200:**
 

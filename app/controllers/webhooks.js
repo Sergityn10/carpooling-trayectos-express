@@ -70,11 +70,7 @@ async function handleCheckoutSessionCompleted(event) {
   if (!reserva) return;
   if (String(reserva.status).toLowerCase() === "completed") return;
 
-  const [userRows] = await connection.query(
-    "SELECT id FROM users WHERE id = ?",
-    [reserva.user_id],
-  );
-  const userId = userRows[0]?.id;
+  const userId = reserva.user_id;
 
   const amount = session.amount_total ?? null;
   const currency = session.currency ?? null;

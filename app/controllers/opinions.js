@@ -37,23 +37,11 @@ async function addOpinion(req, res) {
 
     const trayecto = trayectoRows[0];
 
-    const [conductorRows] = await connection.query(
-      "SELECT name FROM users WHERE id = ?",
-      [trayecto.conductor],
-    );
-    const conductorName = conductorRows[0]?.name;
-
     const isConductor = String(trayecto.conductor) === String(req.user.id);
-
-    const [commentatorRows] = await connection.query(
-      "SELECT id FROM users WHERE id = ?",
-      [user_id_commentator],
-    );
-    const commentatorId = commentatorRows[0]?.id;
 
     const [reservaRows] = await connection.query(
       "SELECT id_reserva FROM reservas WHERE user_id = ? AND id_trayecto = ? AND status = 'completed' LIMIT 1",
-      [commentatorId, trayecto_id],
+      [String(user_id_commentator), trayecto_id],
     );
 
     const isPasajero = Array.isArray(reservaRows) && reservaRows.length > 0;
@@ -67,15 +55,9 @@ async function addOpinion(req, res) {
     }
 
     if (isConductor) {
-      const [trayectRows] = await connection.query(
-        "SELECT id FROM users WHERE id = ?",
-        [user_id_trayect],
-      );
-      const trayectUserId = trayectRows[0]?.id;
-
       const [pasajeroReservaRows] = await connection.query(
         "SELECT id_reserva FROM reservas WHERE user_id = ? AND id_trayecto = ? AND status = 'completed' LIMIT 1",
-        [trayectUserId, trayecto_id],
+        [String(user_id_trayect), trayecto_id],
       );
       if (!pasajeroReservaRows || pasajeroReservaRows.length === 0) {
         return res.status(403).send({
@@ -153,15 +135,6 @@ async function getOpinionByUserIdCommentator(req, res) {
   console.log("userId de la opinión a buscar:", userId);
   try {
     const connection = await database.getConnection();
-    let userExist = await connection.query(`SELECT * FROM users WHERE id = ?`, [
-      userId,
-    ]);
-    if (userExist[0].length === 0) {
-      return res.status(404).send({
-        status: "Error",
-        message: `El usuario no existe con userId ${userId}`,
-      });
-    }
 
     let opinionList = await connection.query(
       `SELECT * FROM ${tableName} WHERE user_id_commentator = ?`,
@@ -187,15 +160,6 @@ async function getOpinionByUserIdTrayect(req, res) {
   console.log("userId de la opinión a buscar:", userId);
   try {
     const connection = await database.getConnection();
-    let userExist = await connection.query(`SELECT * FROM users WHERE id = ?`, [
-      userId,
-    ]);
-    if (userExist[0].length === 0) {
-      return res.status(404).send({
-        status: "Error",
-        message: `El usuario no existe con userId ${userId}`,
-      });
-    }
     let opinionList = await connection.query(
       `SELECT * FROM ${tableName} WHERE user_id_trayect = ?`,
       [userId],

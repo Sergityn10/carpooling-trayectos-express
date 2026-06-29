@@ -24,12 +24,14 @@ model Trayecto {
   destino_lng   Float?
   notified_15min Int     @default(0)
   created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  updated_at    DateTime @default(now()) @updatedAt
 
   @@index([origen_lat, origen_lng], name: "idx_trayectos_origen")
   @@index([destino_lat, destino_lng], name: "idx_trayectos_destino")
   @@index([hora], name: "idx_trayectos_hora")
   @@index([conductor], name: "idx_trayectos_conductor")
+
+  @@map("trayectos")
 }
 
 model Reserva {
@@ -44,11 +46,13 @@ model Reserva {
   trip_outcome_reason           String?  @db.Text
   trip_outcome_at               DateTime?
   created_at                    DateTime @default(now())
-  updated_at                    DateTime @updatedAt
+  updated_at                    DateTime @default(now()) @updatedAt
 
   @@unique([user_id, id_trayecto])
   @@index([id_trayecto], name: "idx_reservas_trayecto")
   @@index([stripe_checkout_session_id], name: "idx_reservas_stripe_checkout")
+
+  @@map("reservas")
 }
 
 model Comment {
@@ -59,11 +63,13 @@ model Comment {
   opinion             String?  @db.Text
   rating              Int?
   created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  updated_at          DateTime @default(now()) @updatedAt
 
   @@unique([user_id_commentator, id_trayecto])
   @@index([id_trayecto], name: "idx_comments_trayecto")
   @@index([user_id_commentator], name: "idx_comments_commentator")
+
+  @@map("comments")
 }
 
 model Ubicacion {
@@ -79,10 +85,12 @@ model Ubicacion {
   type         String?  @db.Text
   user_id      String   @db.VarChar(36)
   created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
+  updated_at   DateTime @default(now()) @updatedAt
 
   @@unique([user_id, address])
   @@index([user_id], name: "idx_ubicaciones_user_id")
+
+  @@map("ubicaciones")
 }
 
 model FrequentRoute {
@@ -101,6 +109,8 @@ model FrequentRoute {
   seats         Int      @default(1)
 
   @@index([user_id], name: "idx_frequents_routes_user_id")
+
+  @@map("frequents_routes")
 }
 
 model PreferenceDefinition {
@@ -110,6 +120,8 @@ model PreferenceDefinition {
   enum_values   String?  @db.Text
   description   String?  @db.Text
   is_active     Int      @default(1)
+
+  @@map("preference_definitions")
 }
 
 model UserPreference {
@@ -121,6 +133,8 @@ model UserPreference {
   @@id([user_id, pref_key])
   @@index([user_id], name: "idx_user_preferences_user_id")
   @@index([pref_key], name: "idx_user_preferences_pref_key")
+
+  @@map("user_preferences")
 }
 
 model Pago {
@@ -137,22 +151,22 @@ model Pago {
 
   @@index([stripe_checkout_session_id], name: "idx_pagos_checkout_session")
   @@index([stripe_payment_intent_id], name: "idx_pagos_payment_intent")
+
+  @@map("pagos")
 }
 
-model User {
-  id             String   @id @db.VarChar(36)
-  name           String?  @db.Text
-  email          String?  @db.Text
-  img_perfil     String?  @db.Text
-  stripe_account String?  @db.Text
-  created_at     DateTime? @default(now())
-}
+model Recorrido {
+  id          String   @id @db.VarChar(36)
+  id_trayecto String   @db.VarChar(36)
+  user_id     String   @db.VarChar(36)
+  lat         Float
+  lng         Float
+  address     String   @db.Text
+  created_at  DateTime @default(now())
 
-model Account {
-  id                Int      @id @default(autoincrement())
-  user_id           String   @db.VarChar(36)
-  stripe_account_id String?  @db.Text
-  created_at        DateTime @default(now())
+  @@index([id_trayecto], name: "idx_recorridos_trayecto")
+  @@index([user_id], name: "idx_recorridos_user_id")
+  @@index([id_trayecto, user_id], name: "idx_recorridos_trayecto_user")
 
-  @@index([user_id], name: "idx_accounts_user_id")
+  @@map("recorridos")
 }

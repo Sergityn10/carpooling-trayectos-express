@@ -30,17 +30,17 @@ POST /api/frequent-routes
 }
 ```
 
-| Campo | Tipo | Requerido | Validación |
-|-------|------|-----------|------------|
-| `name` | string | No | min 1, max 50 |
-| `originAddress` | string | Sí | min 1, max 255 |
-| `originLat` | number | Sí | -90 a 90 |
-| `originLng` | number | Sí | -180 a 180 |
-| `destAddress` | string | Sí | min 1, max 255 |
-| `destLat` | number | Sí | -90 a 90 |
-| `destLng` | number | Sí | -180 a 180 |
-| `role` | string | No | `"DRIVER"` o `"PASSENGER"` (por defecto `"DRIVER"`) |
-| `seats` | number | No | Int 1–7 (por defecto 1) |
+| Campo           | Tipo   | Requerido | Validación                                          |
+| --------------- | ------ | --------- | --------------------------------------------------- |
+| `name`          | string | No        | min 1, max 50                                       |
+| `originAddress` | string | Sí        | min 1, max 255                                      |
+| `originLat`     | number | Sí        | -90 a 90                                            |
+| `originLng`     | number | Sí        | -180 a 180                                          |
+| `destAddress`   | string | Sí        | min 1, max 255                                      |
+| `destLat`       | number | Sí        | -90 a 90                                            |
+| `destLng`       | number | Sí        | -180 a 180                                          |
+| `role`          | string | No        | `"DRIVER"` o `"PASSENGER"` (por defecto `"DRIVER"`) |
+| `seats`         | number | No        | Int 1–7 (por defecto 1)                             |
 
 **Respuesta 201:**
 
@@ -49,8 +49,8 @@ POST /api/frequent-routes
   "status": "Success",
   "message": "Ruta frecuente creada correctamente",
   "frequentRoute": {
-    "id": 5,
-    "user_id": "5",
+    "id": "f1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "name": "Ruta al trabajo",
     "originAddress": "Calle Gran Vía 1, Madrid",
     "originLat": 40.4168,
@@ -87,8 +87,8 @@ GET /api/frequent-routes/me
   "status": "Success",
   "frequentRoutes": [
     {
-      "id": 5,
-      "user_id": "5",
+      "id": "f1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "name": "Ruta al trabajo",
       "originAddress": "Calle Gran Vía 1, Madrid",
       "originLat": 40.4168,
@@ -98,8 +98,8 @@ GET /api/frequent-routes/me
       "destLng": -3.6800,
       "role": "DRIVER",
       "seats": 4,
-      "createdAt": "2025-01-10 12:00:00",
-      "updatedAt": "2025-01-12 08:30:00"
+      "createdAt": "2025-01-10T12:00:00.000Z",
+      "updatedAt": "2025-01-12T08:30:00.000Z"
     }
   ]
 }
@@ -119,9 +119,9 @@ GET /api/frequent-routes/user_id/:userIdParam
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `userIdParam` | string | ID del usuario (debe coincidir con el autenticado) |
+| Parámetro     | Tipo          | Descripción                                        |
+| ------------- | ------------- | -------------------------------------------------- |
+| `userIdParam` | string (UUID) | ID del usuario (debe coincidir con el autenticado) |
 
 **Respuesta 200:** Igual que `GET /api/frequent-routes/me`.
 
@@ -143,9 +143,9 @@ GET /api/frequent-routes/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID de la ruta frecuente |
+| Parámetro | Tipo          | Descripción             |
+| --------- | ------------- | ----------------------- |
+| `id`      | string (UUID) | ID de la ruta frecuente |
 
 **Respuesta 200:**
 
@@ -153,8 +153,8 @@ GET /api/frequent-routes/:id
 {
   "status": "Success",
   "frequentRoute": {
-    "id": 5,
-    "user_id": "5",
+    "id": "f1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "name": "Ruta al trabajo",
     "originAddress": "Calle Gran Vía 1, Madrid",
     "originLat": 40.4168,
@@ -164,8 +164,8 @@ GET /api/frequent-routes/:id
     "destLng": -3.6800,
     "role": "DRIVER",
     "seats": 4,
-    "createdAt": "2025-01-10 12:00:00",
-    "updatedAt": "2025-01-12 08:30:00"
+    "createdAt": "2025-01-10T12:00:00.000Z",
+    "updatedAt": "2025-01-12T08:30:00.000Z"
   }
 }
 ```
@@ -189,9 +189,9 @@ PATCH /api/frequent-routes/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID de la ruta frecuente |
+| Parámetro | Tipo          | Descripción             |
+| --------- | ------------- | ----------------------- |
+| `id`      | string (UUID) | ID de la ruta frecuente |
 
 **Body (JSON):** Cualquier subconjunto de:
 
@@ -225,9 +225,9 @@ DELETE /api/frequent-routes/:id
 
 **Path params:**
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `id` | int | ID de la ruta frecuente |
+| Parámetro | Tipo          | Descripción             |
+| --------- | ------------- | ----------------------- |
+| `id`      | string (UUID) | ID de la ruta frecuente |
 
 **Respuesta 200:**
 
