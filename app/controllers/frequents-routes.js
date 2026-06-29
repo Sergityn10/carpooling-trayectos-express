@@ -251,7 +251,7 @@ async function patchFrequentRoute(req, res) {
       values.push(data[key]);
     }
 
-    setClauses.push("updatedAt = datetime('now')");
+    setClauses.push("updatedAt = NOW()");
 
     const query = `UPDATE ${tableName} SET ${setClauses.join(", ")} WHERE id = ?`;
     values.push(id);

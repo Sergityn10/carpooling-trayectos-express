@@ -40,3 +40,5 @@ docker-compose.override.yml
 
 # Misc
 coverage/
+
+/app/generated/prisma

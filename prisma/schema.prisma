@@ -1,0 +1,158 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model Trayecto {
+  id            String   @id @db.VarChar(36)
+  origen        String   @db.Text
+  destino       String   @db.Text
+  hora          DateTime
+  plazas        Int
+  disponible    Int
+  precio        Float
+  conductor     String   @db.VarChar(36)
+  routeIndex    Int?     @default(0)
+  status        String   @default("programado") @db.VarChar(20)
+  origen_lat    Float?
+  origen_lng    Float?
+  destino_lat   Float?
+  destino_lng   Float?
+  notified_15min Int     @default(0)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@index([origen_lat, origen_lng], name: "idx_trayectos_origen")
+  @@index([destino_lat, destino_lng], name: "idx_trayectos_destino")
+  @@index([hora], name: "idx_trayectos_hora")
+  @@index([conductor], name: "idx_trayectos_conductor")
+}
+
+model Reserva {
+  id_reserva                    String   @id @db.VarChar(36)
+  user_id                       String   @db.VarChar(36)
+  id_trayecto                   String   @db.VarChar(36)
+  status                        String   @default("pending") @db.VarChar(20)
+  stripe_checkout_session_id    String?  @db.VarChar(255)
+  stripe_payment_intent_id      String?  @db.VarChar(255)
+  stripe_payment_intent_status  String?  @db.VarChar(50)
+  trip_outcome                  String   @default("pending") @db.VarChar(20)
+  trip_outcome_reason           String?  @db.Text
+  trip_outcome_at               DateTime?
+  created_at                    DateTime @default(now())
+  updated_at                    DateTime @updatedAt
+
+  @@unique([user_id, id_trayecto])
+  @@index([id_trayecto], name: "idx_reservas_trayecto")
+  @@index([stripe_checkout_session_id], name: "idx_reservas_stripe_checkout")
+}
+
+model Comment {
+  id_comment          String   @id @db.VarChar(36)
+  user_id_commentator String   @db.VarChar(36)
+  user_id_trayect     String   @db.VarChar(36)
+  id_trayecto         String   @db.VarChar(36)
+  opinion             String?  @db.Text
+  rating              Int?
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  @@unique([user_id_commentator, id_trayecto])
+  @@index([id_trayecto], name: "idx_comments_trayecto")
+  @@index([user_id_commentator], name: "idx_comments_commentator")
+}
+
+model Ubicacion {
+  id           String   @id @db.VarChar(36)
+  lat          Float
+  lng          Float
+  display_name String   @db.Text
+  address      String   @db.VarChar(255)
+  city         String?  @db.Text
+  province     String?  @db.Text
+  country      String?  @db.Text
+  postal_code  String?  @db.Text
+  type         String?  @db.Text
+  user_id      String   @db.VarChar(36)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@unique([user_id, address])
+  @@index([user_id], name: "idx_ubicaciones_user_id")
+}
+
+model FrequentRoute {
+  id            String   @id @db.VarChar(36)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now())
+  user_id       String   @db.VarChar(36)
+  name          String?  @db.Text
+  originAddress String   @db.Text
+  originLat     Float
+  originLng     Float
+  destAddress   String   @db.Text
+  destLat       Float
+  destLng       Float
+  role          String   @default("DRIVER") @db.VarChar(20)
+  seats         Int      @default(1)
+
+  @@index([user_id], name: "idx_frequents_routes_user_id")
+}
+
+model PreferenceDefinition {
+  pref_key      String   @id @db.VarChar(100)
+  value_type    String   @db.VarChar(20)
+  default_value String   @db.Text
+  enum_values   String?  @db.Text
+  description   String?  @db.Text
+  is_active     Int      @default(1)
+}
+
+model UserPreference {
+  user_id    String   @db.VarChar(36)
+  pref_key   String   @db.VarChar(100)
+  value      String   @db.Text
+  updated_at DateTime @default(now())
+
+  @@id([user_id, pref_key])
+  @@index([user_id], name: "idx_user_preferences_user_id")
+  @@index([pref_key], name: "idx_user_preferences_pref_key")
+}
+
+model Pago {
+  id                          Int      @id @default(autoincrement())
+  stripe_checkout_session_id  String?  @db.VarChar(255)
+  stripe_payment_intent_id    String?  @db.VarChar(255)
+  payment_status              String?  @db.VarChar(50)
+  amount                      Int?
+  currency                    String?  @db.VarChar(10)
+  user_id                     String?  @db.VarChar(36)
+  id_trayecto                 String?  @db.VarChar(36)
+  stripe_event_id             String?  @db.Text
+  created_at                  DateTime @default(now())
+
+  @@index([stripe_checkout_session_id], name: "idx_pagos_checkout_session")
+  @@index([stripe_payment_intent_id], name: "idx_pagos_payment_intent")
+}
+
+model User {
+  id             String   @id @db.VarChar(36)
+  name           String?  @db.Text
+  email          String?  @db.Text
+  img_perfil     String?  @db.Text
+  stripe_account String?  @db.Text
+  created_at     DateTime? @default(now())
+}
+
+model Account {
+  id                Int      @id @default(autoincrement())
+  user_id           String   @db.VarChar(36)
+  stripe_account_id String?  @db.Text
+  created_at        DateTime @default(now())
+
+  @@index([user_id], name: "idx_accounts_user_id")
+}

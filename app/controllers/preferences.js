@@ -217,7 +217,7 @@ async function updateMyPreferences(req, res) {
       });
     }
 
-    await connection.query("BEGIN");
+    await connection.query("START TRANSACTION");
     transactionStarted = true;
 
     for (const prefKey of keys) {
@@ -246,7 +246,7 @@ async function updateMyPreferences(req, res) {
       }
 
       await connection.query(
-        "INSERT INTO user_preferences (user_id, pref_key, value, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(user_id, pref_key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+        "INSERT INTO user_preferences (user_id, pref_key, value, updated_at) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = NOW()",
         [userId, prefKey, storedValue],
       );
     }
@@ -302,7 +302,7 @@ async function insertDefaultUserPreferences(req, res) {
   }
   try {
     const connection = await database.getConnection();
-    await connection.query("BEGIN");
+    await connection.query("START TRANSACTION");
     // Get all active preference definitions
     const [definitions] = await connection.query(
       "SELECT pref_key, default_value FROM preference_definitions WHERE is_active = 1",
@@ -310,9 +310,8 @@ async function insertDefaultUserPreferences(req, res) {
     // Insert default preferences for the user
     for (const def of definitions) {
       await connection.query(
-        `INSERT INTO user_preferences (user_id, pref_key, value, updated_at)
-         VALUES (?, ?, ?, datetime('now'))
-         ON CONFLICT(user_id, pref_key) DO NOTHING`,
+        `INSERT IGNORE INTO user_preferences (user_id, pref_key, value, updated_at)
+         VALUES (?, ?, ?, NOW())`,
         [userId, def.pref_key, def.default_value],
       );
     }

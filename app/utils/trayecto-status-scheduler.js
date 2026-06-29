@@ -79,7 +79,7 @@ async function tick() {
   const connection = await database.getConnection();
 
   const [toStart] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND datetime(hora) <= datetime('now')",
+    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND hora <= NOW()",
   );
 
   for (const trayecto of toStart ?? []) {
@@ -98,7 +98,7 @@ async function tick() {
   }
 
   const [toFinalize] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'en curso' AND datetime(hora, '+2 days') <= datetime('now')",
+    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'en curso' AND DATE_ADD(hora, INTERVAL 2 DAY) <= NOW()",
   );
 
   for (const trayecto of toFinalize ?? []) {

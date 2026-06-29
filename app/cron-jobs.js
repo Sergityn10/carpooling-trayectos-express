@@ -86,7 +86,7 @@ async function deleteTrayectoChatIfExists(trayectoId) {
 async function tickCleanupFinalizedTrayectoChats() {
   const connection = await database.getConnection();
   const [trayectos] = await connection.query(
-    "SELECT id FROM trayectos WHERE status = 'finalizado' AND datetime(hora, '+2 days') <= datetime('now')",
+    "SELECT id FROM trayectos WHERE status = 'finalizado' AND DATE_ADD(hora, INTERVAL 2 DAY) <= NOW()",
   );
 
   for (const t of trayectos ?? []) {
@@ -171,7 +171,7 @@ async function tickTrayectoStatusAndNotify() {
   const connection = await database.getConnection();
 
   const [toStart] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND datetime(hora) <= datetime('now')",
+    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND hora <= NOW()",
   );
 
   for (const trayecto of toStart ?? []) {
@@ -190,7 +190,7 @@ async function tickTrayectoStatusAndNotify() {
   }
 
   const [toFinalize] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'en curso' AND datetime(hora, '+2 days') <= datetime('now')",
+    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'en curso' AND DATE_ADD(hora, INTERVAL 2 DAY) <= NOW()",
   );
 
   for (const trayecto of toFinalize ?? []) {
@@ -213,7 +213,7 @@ async function tickTrayectosAPuntoDeComenzar() {
   const connection = await database.getConnection();
 
   const [trayectos] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND (notified_15min IS NULL OR notified_15min = 0) AND datetime(hora) > datetime('now') AND datetime(hora) <= datetime('now', '+15 minutes')",
+    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND (notified_15min IS NULL OR notified_15min = 0) AND hora > NOW() AND hora <= DATE_ADD(NOW(), INTERVAL 15 MINUTE)",
   );
 
   for (const trayecto of trayectos ?? []) {

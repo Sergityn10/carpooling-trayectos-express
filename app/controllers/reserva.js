@@ -592,7 +592,7 @@ async function deleteReserva(req, res) {
 
   try {
     let transactionStarted = false;
-    await connection.query("BEGIN");
+    await connection.query("START TRANSACTION");
     transactionStarted = true;
     let trayectoId = reserva.id_trayecto;
     let getChat = await fetch(
@@ -797,7 +797,7 @@ async function confirmarViajeExitoso(req, res) {
   }
 
   await connection.query(
-    "UPDATE reservas SET trip_outcome = 'success', trip_outcome_reason = NULL, trip_outcome_at = datetime('now'), stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ?), stripe_payment_intent_status = COALESCE(stripe_payment_intent_status, 'captured') WHERE id_reserva = ?",
+    "UPDATE reservas SET trip_outcome = 'success', trip_outcome_reason = NULL, trip_outcome_at = NOW(), stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ?), stripe_payment_intent_status = COALESCE(stripe_payment_intent_status, 'captured') WHERE id_reserva = ?",
     [paymentIntentId, idReserva],
   );
 
@@ -851,7 +851,7 @@ async function reclamarViaje(req, res) {
   }
 
   await connection.query(
-    "UPDATE reservas SET trip_outcome = 'issue', trip_outcome_reason = ?, trip_outcome_at = datetime('now') WHERE id_reserva = ?",
+    "UPDATE reservas SET trip_outcome = 'issue', trip_outcome_reason = ?, trip_outcome_at = NOW() WHERE id_reserva = ?",
     [reason, idReserva],
   );
 

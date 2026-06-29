@@ -91,6 +91,7 @@ async function getTrayectos(req, res) {
 
     let preferencesByDriver = {};
     if (driverIds.length > 0) {
+      const placeholders = driverIds.map(() => "?").join(",");
       const [preferences] = await connection.query(
         `SELECT 
           d.pref_key, 
@@ -99,8 +100,8 @@ async function getTrayectos(req, res) {
           u.value
         FROM user_preferences u
         JOIN preference_definitions d ON u.pref_key = d.pref_key
-        WHERE u.user_id IN (?) AND d.is_active = 1`,
-        [driverIds],
+        WHERE u.user_id IN (${placeholders}) AND d.is_active = 1`,
+        driverIds,
       );
 
       // Group preferences by user_id
