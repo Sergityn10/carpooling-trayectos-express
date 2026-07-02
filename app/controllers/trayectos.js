@@ -477,29 +477,63 @@ async function obtenerTrayectos(req, res) {
 
 async function obtenerTrayectoPorId(req, res) {
   const { id } = req.params;
+  console.log("[obtenerTrayectoPorId] Buscando trayecto con id:", id);
   const trayecto = await prisma.trayecto.findUnique({
     where: { id },
   });
+  console.log(
+    "[obtenerTrayectoPorId] Trayecto encontrado:",
+    trayecto ? "sí" : "no",
+  );
 
   if (!trayecto) {
+    console.log(
+      "[obtenerTrayectoPorId] Trayecto no encontrado, devolviendo 404",
+    );
     return res
       .status(404)
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
 
+  console.log(
+    "[obtenerTrayectoPorId] Trayecto data:",
+    JSON.stringify(trayecto, null, 2),
+  );
+
+  console.log(
+    "[obtenerTrayectoPorId] Fetching conductor info para:",
+    String(trayecto.conductor),
+  );
   const conductorInfo = await UsersAPI.fetchUserPublicInfo(
     String(trayecto.conductor),
+  );
+  console.log(
+    "[obtenerTrayectoPorId] Conductor info:",
+    conductorInfo ? JSON.stringify(conductorInfo) : "null",
   );
   const conductorName = conductorInfo?.name || "Desconocido";
   const imgPerfil = conductorInfo?.img_perfil;
 
   const fecha = new Date(trayecto.hora).toDateString();
   const fechaHora = new Date(trayecto.hora).toISOString();
+  console.log(
+    "[obtenerTrayectoPorId] fecha:",
+    fecha,
+    "| fechaHora:",
+    fechaHora,
+  );
+
   const userId = req.user?.id;
+  console.log("[obtenerTrayectoPorId] userId del token:", userId);
   const valorado = await hasUserRatedTrayecto(userId, trayecto.id);
+  console.log("[obtenerTrayectoPorId] valorado:", valorado);
 
   // Get driver's preferences
   let driverPreferences = {};
+  console.log(
+    "[obtenerTrayectoPorId] Buscando preferencias para conductor:",
+    trayecto.conductor,
+  );
   const preferences = await prisma.userPreference.findMany({
     where: {
       user_id: trayecto.conductor,
@@ -509,6 +543,11 @@ async function obtenerTrayectoPorId(req, res) {
       PreferenceDefinition: { select: { pref_key: true, value_type: true } },
     },
   });
+  console.log(
+    "[obtenerTrayectoPorId] Preferencias encontradas:",
+    preferences.length,
+    JSON.stringify(preferences, null, 2),
+  );
 
   for (const p of preferences) {
     driverPreferences[p.PreferenceDefinition.pref_key] = parsePreferenceValue(
@@ -516,8 +555,12 @@ async function obtenerTrayectoPorId(req, res) {
       p.value,
     );
   }
+  console.log(
+    "[obtenerTrayectoPorId] driverPreferences finales:",
+    JSON.stringify(driverPreferences),
+  );
 
-  return res.status(200).json({
+  const response = {
     ...trayecto,
     conductor: conductorName,
     conductor_id: trayecto.conductor,
@@ -526,7 +569,9 @@ async function obtenerTrayectoPorId(req, res) {
     img_perfil: imgPerfil,
     valorado,
     driverPreferences,
-  });
+  };
+  console.log("[obtenerTrayectoPorId] Enviando respuesta 200");
+  return res.status(200).json(response);
 }
 
 async function obtenerTrayectosPorConductor(req, res) {
