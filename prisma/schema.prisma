@@ -124,6 +124,8 @@ model PreferenceDefinition {
   description   String?  @db.Text
   is_active     Int      @default(1)
 
+  UserPreferences UserPreference[]
+
   @@map("preference_definitions")
 }
 
@@ -132,6 +134,8 @@ model UserPreference {
   pref_key   String   @db.VarChar(100)
   value      String   @db.Text
   updated_at DateTime @default(now())
+
+  PreferenceDefinition PreferenceDefinition @relation(fields: [pref_key], references: [pref_key])
 
   @@id([user_id, pref_key])
   @@index([user_id], name: "idx_user_preferences_user_id")
