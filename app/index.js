@@ -20,6 +20,7 @@ import {
 import { OilPriceProvider } from "./providers/precio-oil.js";
 
 const app = express();
+app.set("etag", false);
 
 await initDatabase();
 
