@@ -25,6 +25,8 @@ model Trayecto {
   created_at    DateTime @default(now())
   updated_at    DateTime @default(now()) @updatedAt
 
+  Reservas      Reserva[]
+
   @@index([origen_lat, origen_lng], name: "idx_trayectos_origen")
   @@index([destino_lat, destino_lng], name: "idx_trayectos_destino")
   @@index([hora], name: "idx_trayectos_hora")
@@ -46,6 +48,8 @@ model Reserva {
   trip_outcome_at               DateTime?
   created_at                    DateTime @default(now())
   updated_at                    DateTime @default(now()) @updatedAt
+
+  Trayecto                      Trayecto @relation(fields: [id_trayecto], references: [id])
 
   @@unique([user_id, id_trayecto])
   @@index([id_trayecto], name: "idx_reservas_trayecto")

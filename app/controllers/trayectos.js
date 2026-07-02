@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { database } from "../database.js";
+import { prisma } from "../database.js";
 import { GoogleMapsProvider } from "../providers/google-maps.js";
 import { OilPriceProvider } from "../providers/precio-oil.js";
 import { TrayectosSchema } from "../schemas/trayecto.js";
@@ -36,28 +36,34 @@ function getAuthHeaders(req) {
   return { token, headers };
 }
 
-async function hasUserRatedTrayecto(connection, userId, trayectoId) {
+async function hasUserRatedTrayecto(userId, trayectoId) {
   if (!userId || !trayectoId) return false;
-  const [rows] = await connection.query(
-    "SELECT 1 FROM comments WHERE id_trayecto = ? AND user_id_commentator = ? LIMIT 1",
-    [trayectoId, userId],
-  );
-  return Array.isArray(rows) && rows.length > 0;
+  const comment = await prisma.comment.findFirst({
+    where: {
+      id_trayecto: String(trayectoId),
+      user_id_commentator: String(userId),
+    },
+    select: { id_comment: true },
+  });
+  return !!comment;
 }
 
-async function getRatedTrayectoIdsForUser(connection, userId, trayectoIds) {
+async function getRatedTrayectoIdsForUser(userId, trayectoIds) {
   if (!userId) return new Set();
   const ids = (trayectoIds ?? [])
     .map((x) => String(x))
     .filter((x) => x.length > 0);
   if (ids.length === 0) return new Set();
 
-  const placeholders = ids.map(() => "?").join(",");
-  const [rows] = await connection.query(
-    `SELECT DISTINCT id_trayecto FROM comments WHERE user_id_commentator = ? AND id_trayecto IN (${placeholders})`,
-    [String(userId), ...ids],
-  );
-  return new Set((rows ?? []).map((r) => String(r.id_trayecto)));
+  const comments = await prisma.comment.findMany({
+    where: {
+      user_id_commentator: String(userId),
+      id_trayecto: { in: ids },
+    },
+    select: { id_trayecto: true },
+    distinct: ["id_trayecto"],
+  });
+  return new Set(comments.map((c) => String(c.id_trayecto)));
 }
 
 function parsePreferenceValue(valueType, raw) {
@@ -79,47 +85,39 @@ function parsePreferenceValue(valueType, raw) {
 
 async function getTrayectos(req, res) {
   try {
-    const connection = await database.getConnection();
-    const [trayectos] = await connection.query(
-      "SELECT * FROM trayectos WHERE status != 'cancelado'",
-    );
+    const trayectos = await prisma.trayecto.findMany({
+      where: { NOT: { status: "cancelado" } },
+    });
 
-    // If there are no trayectos, return empty array
     if (!trayectos || trayectos.length === 0) {
       return res.status(200).send({ status: "Success", trayectos: [] });
     }
 
-    // Get all unique driver ids
     const driverIds = [...new Set(trayectos.map((t) => t.conductor))];
 
     let preferencesByDriver = {};
     if (driverIds.length > 0) {
-      const placeholders = driverIds.map(() => "?").join(",");
-      const [preferences] = await connection.query(
-        `SELECT 
-          d.pref_key, 
-          d.value_type, 
-          u.user_id, 
-          u.value
-        FROM user_preferences u
-        JOIN preference_definitions d ON u.pref_key = d.pref_key
-        WHERE u.user_id IN (${placeholders}) AND d.is_active = 1`,
-        driverIds,
-      );
+      const preferences = await prisma.userPreference.findMany({
+        where: {
+          user_id: { in: driverIds },
+          PreferenceDefinition: { is_active: 1 },
+        },
+        include: {
+          PreferenceDefinition: {
+            select: { pref_key: true, value_type: true },
+          },
+        },
+      });
 
-      // Group preferences by user_id
       for (const p of preferences) {
         if (!preferencesByDriver[p.user_id]) {
           preferencesByDriver[p.user_id] = {};
         }
-        preferencesByDriver[p.user_id][p.pref_key] = parsePreferenceValue(
-          p.value_type,
-          p.value,
-        );
+        preferencesByDriver[p.user_id][p.PreferenceDefinition.pref_key] =
+          parsePreferenceValue(p.PreferenceDefinition.value_type, p.value);
       }
     }
 
-    // Attach driverPreferences to each trayecto
     const trayectosWithPreferences = trayectos.map((t) => ({
       ...t,
       driverPreferences: preferencesByDriver[t.conductor] || {},
@@ -202,7 +200,6 @@ async function crearTrayecto(req, res) {
     );
   }
   console.log("[crearTrayecto] Obteniendo conexión a BD...");
-  const connection = await database.getConnection();
   console.log("[crearTrayecto] Conexión BD obtenida");
   // Combina fecha y hora en un solo objeto Date en UTC
   let fechaHoraSQL;
@@ -292,24 +289,24 @@ async function crearTrayecto(req, res) {
       "[crearTrayecto] Insertando trayecto en BD con UUID:",
       trayectoId,
     );
-    [result] = await connection.query(
-      "INSERT INTO trayectos (id, origen, destino, hora, plazas, conductor, disponible, precio, origen_lat, origen_lng, destino_lat, destino_lng, routeIndex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        trayectoId,
+    await prisma.trayecto.create({
+      data: {
+        id: trayectoId,
         origen,
         destino,
-        fechaHoraSQL,
+        hora: new Date(fechaHoraSQL),
         plazas,
         conductor,
         disponible,
         precio,
-        originDetails.lat,
-        originDetails.lng,
-        destinationDetails.lat,
-        destinationDetails.lng,
+        origen_lat: originDetails.lat,
+        origen_lng: originDetails.lng,
+        destino_lat: destinationDetails.lat,
+        destino_lng: destinationDetails.lng,
         routeIndex,
-      ],
-    );
+      },
+    });
+    result = true;
   } catch (error) {
     console.error(
       "[crearTrayecto] Error al insertar en BD. Código:",
@@ -318,11 +315,11 @@ async function crearTrayecto(req, res) {
       error.message,
     );
     switch (error.code) {
-      case "ER_NO_REFERENCED_ROW_2":
+      case "P2003":
         return res
           .status(400)
           .send({ status: "Error", message: "El conductor no existe" });
-      case "ER_DUP_ENTRY":
+      case "P2002":
         return res.status(400).send({
           status: "Error",
           message: "Ya existe un trayecto con la misma fecha y hora",
@@ -335,7 +332,7 @@ async function crearTrayecto(req, res) {
   }
   const insertedId = trayectoId;
   console.log("[crearTrayecto] Trayecto insertado con ID:", insertedId);
-  if (!result || result.affectedRows === 0) {
+  if (!result) {
     return res
       .status(500)
       .send({ status: "Error", message: "Error al crear el trayecto" });
@@ -362,9 +359,7 @@ async function crearTrayecto(req, res) {
   if (!MESSAGES_URL) {
     console.error("[crearTrayecto] MESSAGES_URL no configurado — rollback");
     try {
-      await connection.query("DELETE FROM trayectos WHERE id = ?", [
-        insertedId,
-      ]);
+      await prisma.trayecto.delete({ where: { id: insertedId } });
     } catch (e) {
       console.error(
         "Error haciendo rollback del trayecto tras MESSAGES_URL missing:",
@@ -420,9 +415,7 @@ async function crearTrayecto(req, res) {
       error,
     );
     try {
-      await connection.query("DELETE FROM trayectos WHERE id = ?", [
-        insertedId,
-      ]);
+      await prisma.trayecto.delete({ where: { id: insertedId } });
     } catch (e) {
       console.error(
         "Error haciendo rollback del trayecto tras fallo de chat:",
@@ -457,8 +450,7 @@ function convertirFechaHoraUTC(fecha, hora) {
 }
 
 async function obtenerTrayectos(req, res) {
-  const connection = await database.getConnection();
-  const [rows] = await connection.query("SELECT * FROM trayectos");
+  const rows = await prisma.trayecto.findMany();
   const userId = req.user?.id;
 
   // Obtener detalles de conductores (nombre e imagen) desde el microservicio de usuarios
@@ -467,7 +459,6 @@ async function obtenerTrayectos(req, res) {
   const usersMap = new Map(usersList.map((u) => [u.id, u]));
 
   const ratedIds = await getRatedTrayectoIdsForUser(
-    connection,
     userId,
     rows.map((t) => t.id),
   );
@@ -486,18 +477,16 @@ async function obtenerTrayectos(req, res) {
 
 async function obtenerTrayectoPorId(req, res) {
   const { id } = req.params;
-  const connection = await database.getConnection();
-  const [rows] = await connection.query(
-    "SELECT * FROM trayectos WHERE id = ?",
-    [id],
-  );
+  const trayecto = await prisma.trayecto.findUnique({
+    where: { id },
+  });
 
-  if (rows.length === 0) {
+  if (!trayecto) {
     return res
       .status(404)
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
-  const trayecto = rows[0];
+
   const conductorInfo = await UsersAPI.fetchUserPublicInfo(
     String(trayecto.conductor),
   );
@@ -505,24 +494,27 @@ async function obtenerTrayectoPorId(req, res) {
   const imgPerfil = conductorInfo?.img_perfil;
 
   const fecha = new Date(trayecto.hora).toDateString();
-  const fechaHora = new Date(trayecto.hora + ".000Z").toISOString();
+  const fechaHora = new Date(trayecto.hora).toISOString();
   const userId = req.user?.id;
-  const valorado = await hasUserRatedTrayecto(connection, userId, trayecto.id);
+  const valorado = await hasUserRatedTrayecto(userId, trayecto.id);
 
   // Get driver's preferences
   let driverPreferences = {};
-  const [preferences] = await connection.query(
-    `SELECT 
-      d.pref_key, 
-      d.value_type, 
-      u.value
-    FROM user_preferences u
-    JOIN preference_definitions d ON u.pref_key = d.pref_key
-    WHERE u.user_id = ? AND d.is_active = 1`,
-    [trayecto.conductor],
-  );
+  const preferences = await prisma.userPreference.findMany({
+    where: {
+      user_id: trayecto.conductor,
+      PreferenceDefinition: { is_active: 1 },
+    },
+    include: {
+      PreferenceDefinition: { select: { pref_key: true, value_type: true } },
+    },
+  });
+
   for (const p of preferences) {
-    driverPreferences[p.pref_key] = parsePreferenceValue(p.value_type, p.value);
+    driverPreferences[p.PreferenceDefinition.pref_key] = parsePreferenceValue(
+      p.PreferenceDefinition.value_type,
+      p.value,
+    );
   }
 
   return res.status(200).json({
@@ -539,11 +531,9 @@ async function obtenerTrayectoPorId(req, res) {
 
 async function obtenerTrayectosPorConductor(req, res) {
   const { id } = req.params;
-  const connection = await database.getConnection();
-  const [rows] = await connection.query(
-    "SELECT * FROM trayectos WHERE conductor = ?",
-    [id],
-  );
+  const rows = await prisma.trayecto.findMany({
+    where: { conductor: id },
+  });
   let trayectos = await Promise.all(
     rows.map(async (trayecto) => {
       const conductorInfo = await UsersAPI.fetchUserPublicInfo(
@@ -559,7 +549,6 @@ async function obtenerTrayectosPorConductor(req, res) {
   );
   const currentuserId = req.user?.id;
   const ratedIds = await getRatedTrayectoIdsForUser(
-    connection,
     currentuserId,
     trayectos.map((t) => t.id),
   );
@@ -588,14 +577,12 @@ async function obtenerMisTrayectos(req, res) {
   }
 
   console.log("[obtenerMisTrayectos] Obteniendo conexión a BD...");
-  const connection = await database.getConnection();
   console.log("[obtenerMisTrayectos] Conexión BD obtenida");
 
   console.log("[obtenerMisTrayectos] Consultando trayectos del conductor:", id);
-  const [rows] = await connection.query(
-    "SELECT * FROM trayectos WHERE conductor = ?",
-    [id],
-  );
+  const rows = await prisma.trayecto.findMany({
+    where: { conductor: id },
+  });
   console.log("[obtenerMisTrayectos] Trayectos encontrados:", rows.length);
 
   // Obtener mi nombre e imagen desde el microservicio de usuarios
@@ -617,7 +604,6 @@ async function obtenerMisTrayectos(req, res) {
     "[obtenerMisTrayectos] Obteniendo IDs de trayectos ya valorados por el usuario",
   );
   const ratedIds = await getRatedTrayectoIdsForUser(
-    connection,
     id,
     rows.map((t) => t.id),
   );
@@ -648,25 +634,23 @@ async function obtenerProximosTrayectos(req, res) {
     });
   }
 
-  const connection = await database.getConnection();
+  const now = new Date();
+  const twoDaysLater = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
 
-  const [rows] = await connection.query(
-    `SELECT t.* FROM trayectos t
-     LEFT JOIN reservas r ON r.id_trayecto = t.id AND r.user_id = ?
-     WHERE (t.conductor = ? OR r.user_id = ?)
-       AND t.hora >= NOW()
-       AND t.hora <= DATE_ADD(NOW(), INTERVAL 2 DAY)
-       AND t.status NOT IN ('finalizado', 'cancelado')
-     ORDER BY t.hora ASC`,
-    [id, id, id],
-  );
+  const rows = await prisma.trayecto.findMany({
+    where: {
+      OR: [{ conductor: id }, { Reservas: { some: { user_id: id } } }],
+      hora: { gte: now, lte: twoDaysLater },
+      status: { notIn: ["finalizado", "cancelado"] },
+    },
+    orderBy: { hora: "asc" },
+  });
 
   const conductorIds = [...new Set(rows.map((t) => String(t.conductor)))];
   const usersList = await UsersAPI.fetchUsersByIds(conductorIds);
   const usersMap = new Map(usersList.map((u) => [u.id, u]));
 
   const ratedIds = await getRatedTrayectoIdsForUser(
-    connection,
     id,
     rows.map((t) => t.id),
   );
@@ -698,12 +682,17 @@ async function iniciarTrayecto(req, res) {
     return res.status(401).send({ status: "Error", message: "No autenticado" });
   }
 
-  const connection = await database.getConnection();
-  const [rows] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor, status FROM trayectos WHERE id = ?",
-    [trayectoId],
-  );
-  const trayecto = rows?.[0];
+  const trayecto = await prisma.trayecto.findUnique({
+    where: { id: trayectoId },
+    select: {
+      id: true,
+      origen: true,
+      destino: true,
+      hora: true,
+      conductor: true,
+      status: true,
+    },
+  });
   if (!trayecto) {
     return res
       .status(404)
@@ -725,12 +714,12 @@ async function iniciarTrayecto(req, res) {
     });
   }
 
-  const [result] = await connection.query(
-    "UPDATE trayectos SET status = 'en curso' WHERE id = ? AND status = 'programado'",
-    [trayectoId],
-  );
+  const updated = await prisma.trayecto.updateMany({
+    where: { id: trayectoId, status: "programado" },
+    data: { status: "en curso" },
+  });
 
-  if (!result?.affectedRows) {
+  if (!updated.count) {
     return res.status(409).send({
       status: "Error",
       message: "No se pudo iniciar el trayecto (estado no válido)",
@@ -738,7 +727,7 @@ async function iniciarTrayecto(req, res) {
   }
 
   try {
-    await notifyTrayectoEnCurso(connection, trayecto);
+    await notifyTrayectoEnCurso(trayecto);
   } catch (e) {
     console.error("Error notificando trayecto en curso:", e);
   }
@@ -763,12 +752,17 @@ async function finalizarTrayecto(req, res) {
     return res.status(401).send({ status: "Error", message: "No autenticado" });
   }
 
-  const connection = await database.getConnection();
-  const [rows] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor, status FROM trayectos WHERE id = ?",
-    [trayectoId],
-  );
-  const trayecto = rows?.[0];
+  const trayecto = await prisma.trayecto.findUnique({
+    where: { id: trayectoId },
+    select: {
+      id: true,
+      origen: true,
+      destino: true,
+      hora: true,
+      conductor: true,
+      status: true,
+    },
+  });
   if (!trayecto) {
     return res
       .status(404)
@@ -790,12 +784,12 @@ async function finalizarTrayecto(req, res) {
     });
   }
 
-  const [result] = await connection.query(
-    "UPDATE trayectos SET status = 'finalizado' WHERE id = ? AND status = 'en curso'",
-    [trayectoId],
-  );
+  const updated = await prisma.trayecto.updateMany({
+    where: { id: trayectoId, status: "en curso" },
+    data: { status: "finalizado" },
+  });
 
-  if (!result?.affectedRows) {
+  if (!updated.count) {
     return res.status(409).send({
       status: "Error",
       message: "No se pudo finalizar el trayecto (estado no válido)",
@@ -803,7 +797,7 @@ async function finalizarTrayecto(req, res) {
   }
 
   try {
-    await notifyTrayectoFinalizado(connection, trayecto);
+    await notifyTrayectoFinalizado(trayecto);
   } catch (e) {
     console.error("Error notificando trayecto finalizado:", e);
   }
@@ -824,8 +818,7 @@ async function actualizarTrayecto(req, res) {
       .send({ status: "Error", message: JSON.parse(validation.error.message) });
   }
 
-  const data = validation.data;
-  const connection = await database.getConnection();
+  const data = { ...validation.data };
 
   // Check if there are any fields to update
   if (Object.keys(data).length === 0) {
@@ -835,17 +828,15 @@ async function actualizarTrayecto(req, res) {
     });
   }
 
-  // Build the dynamic SQL query
-  const setClauses = [];
-  const values = [];
+  // Build the Prisma update data object
+  const updateData = {};
 
   // Combine 'fecha' and 'hora' if both are provided
   if (data.fecha && data.hora) {
     try {
       const fechaHoraSQL = convertirFechaHoraUTC(data.fecha, data.hora);
-      setClauses.push("hora = ?");
-      values.push(fechaHoraSQL);
-      delete data.fecha; // Remove from the data object to avoid processing twice
+      updateData.hora = new Date(fechaHoraSQL);
+      delete data.fecha;
       delete data.hora;
     } catch (error) {
       console.error("Error al procesar la fecha y hora:", error);
@@ -855,7 +846,6 @@ async function actualizarTrayecto(req, res) {
       });
     }
   } else if (data.fecha || data.hora) {
-    // If only one is provided, it's an error in this context
     return res.status(400).send({
       status: "Error",
       message:
@@ -863,20 +853,17 @@ async function actualizarTrayecto(req, res) {
     });
   }
 
-  // Iterate over the rest of the validated data to build the query
+  // Map remaining fields to Prisma update data
   for (const key in data) {
-    // We use backticks for column names to avoid conflicts with reserved words, just in case
-    setClauses.push(`\`${key}\` = ?`);
-    values.push(data[key]);
+    updateData[key] = data[key];
   }
 
-  // Construct the final query string
-  const query = `UPDATE trayectos SET ${setClauses.join(", ")} WHERE id = ?`;
-  values.push(id); // Add the ID at the end for the WHERE clause
-
   try {
-    const result = await connection.query(query, values);
-    if (result[0].affectedRows === 0) {
+    const result = await prisma.trayecto.updateMany({
+      where: { id },
+      data: updateData,
+    });
+    if (result.count === 0) {
       return res
         .status(404)
         .send({ status: "Error", message: "Trayecto no encontrado" });
@@ -888,8 +875,6 @@ async function actualizarTrayecto(req, res) {
       status: "Error",
       message: "Error en el servidor al actualizar el trayecto.",
     });
-  } finally {
-    // connection.release(); // Always release the connection
   }
 }
 
@@ -912,57 +897,47 @@ async function patchTrayecto(req, res) {
     routeIndex,
   } = validation.data;
 
-  const connection = await database.getConnection();
   let fechaHora = convertirFechaHoraUTC(fecha, hora);
 
-  const originalTrayect = await connection.query(
-    "SELECT * FROM trayectos WHERE id = ?",
-    [id],
-  );
-  const originalPlazas = originalTrayect[0][0].plazas;
-  const originalDisponible = originalTrayect[0][0].disponible;
-
-  const originalOrigin = originalTrayect[0][0].origen;
-  const originalDestination = originalTrayect[0][0].destino;
-
-  if (originalOrigin !== origen) {
-    const originCoords = await GoogleMapsProvider.geocodeAddress(origen);
-    const updateOrigin = await connection.query(
-      "UPDATE trayectos SET origen_lat = ?, origen_lng = ? WHERE id = ?",
-      [originCoords.lat, originCoords.lng, id],
-    );
-  }
-  if (originalDestination !== destino) {
-    const destinationCoords = await GoogleMapsProvider.geocodeAddress(destino);
-    const updateDestination = await connection.query(
-      "UPDATE trayectos SET destino_lat = ?, destino_lng = ? WHERE id = ?",
-      [destinationCoords.lat, destinationCoords.lng, id],
-    );
-  }
-
-  if (originalPlazas < plazas) {
-    let diferencia = originalDisponible + (plazas - originalPlazas);
-    const updateDisponible = await connection.query(
-      "UPDATE trayectos SET disponible = ? WHERE id = ?",
-      [diferencia, id],
-    );
-  } else {
-    let diferencia = originalDisponible - (originalPlazas - plazas);
-    const updateDisponible = await connection.query(
-      "UPDATE trayectos SET disponible = ? WHERE id = ?",
-      [diferencia, id],
-    );
-  }
-
-  const result = await connection.query(
-    "UPDATE trayectos SET origen = COALESCE(?, origen), destino = COALESCE(?, destino), hora = COALESCE(?, hora), plazas = COALESCE(?, plazas), conductor = COALESCE(?, conductor), precio = COALESCE(?, precio), routeIndex = COALESCE(?, routeIndex) WHERE id = ?",
-    [origen, destino, fechaHora, plazas, conductor, precio, routeIndex, id],
-  );
-  if (result[0].affectedRows === 0) {
+  const original = await prisma.trayecto.findUnique({ where: { id } });
+  if (!original) {
     return res
       .status(404)
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
+
+  const updateData = {};
+
+  if (original.origen !== origen) {
+    const originCoords = await GoogleMapsProvider.geocodeAddress(origen);
+    updateData.origen_lat = originCoords.lat;
+    updateData.origen_lng = originCoords.lng;
+  }
+  if (original.destino !== destino) {
+    const destinationCoords = await GoogleMapsProvider.geocodeAddress(destino);
+    updateData.destino_lat = destinationCoords.lat;
+    updateData.destino_lng = destinationCoords.lng;
+  }
+
+  if (original.plazas < plazas) {
+    updateData.disponible = original.disponible + (plazas - original.plazas);
+  } else {
+    updateData.disponible = original.disponible - (original.plazas - plazas);
+  }
+
+  updateData.origen = origen;
+  updateData.destino = destino;
+  updateData.hora = new Date(fechaHora);
+  updateData.plazas = plazas;
+  updateData.conductor = conductor;
+  updateData.precio = precio;
+  updateData.routeIndex = routeIndex;
+
+  await prisma.trayecto.update({
+    where: { id },
+    data: updateData,
+  });
+
   return res
     .status(204)
     .send({ status: "Success", message: "Trayecto actualizado correctamente" });
@@ -970,14 +945,15 @@ async function patchTrayecto(req, res) {
 
 async function eliminarTrayecto(req, res) {
   const { id } = req.params;
-  const connection = await database.getConnection();
-  const result = await connection.query("DELETE FROM trayectos WHERE id = ?", [
-    id,
-  ]);
-  if (result[0].affectedRows === 0) {
-    return res
-      .status(404)
-      .send({ status: "Error", message: "Trayecto no encontrado" });
+  try {
+    await prisma.trayecto.delete({ where: { id } });
+  } catch (error) {
+    if (error.code === "P2025") {
+      return res
+        .status(404)
+        .send({ status: "Error", message: "Trayecto no encontrado" });
+    }
+    throw error;
   }
   return res.sendStatus(204);
 }
@@ -1056,34 +1032,23 @@ async function buscarTrayectos(req, res) {
     const destMinLng = userDestCoords.lng - deltaLngDegDest;
     const destMaxLng = userDestCoords.lng + deltaLngDegDest;
 
-    const connection = await database.getConnection();
+    const rows = await prisma.trayecto.findMany({
+      where: {
+        origen_lat: { gte: originMinLat, lte: originMaxLat },
+        origen_lng: { gte: originMinLng, lte: originMaxLng },
+        destino_lat: { gte: destMinLat, lte: destMaxLat },
+        destino_lng: { gte: destMinLng, lte: destMaxLng },
+        disponible: { gte: seats },
+      },
+      orderBy: { hora: "asc" },
+    });
 
-    const baseSQL = `
-            SELECT *
-            FROM trayectos
-            WHERE 
-                origen_lat BETWEEN ? AND ? AND
-                origen_lng BETWEEN ? AND ? AND
-                destino_lat BETWEEN ? AND ? AND
-                destino_lng BETWEEN ? AND ? AND
-                DATE(hora) = ? AND 
-                disponible >= ?
-            ORDER BY hora ASC
-        `;
-    const baseParams = [
-      originMinLat,
-      originMaxLat,
-      originMinLng,
-      originMaxLng,
-      destMinLat,
-      destMaxLat,
-      destMinLng,
-      destMaxLng,
-      f,
-      seats,
-    ];
-
-    const [rows] = await connection.query(baseSQL, baseParams);
+    // Filter by date (YYYY-MM-DD) in JavaScript since Prisma doesn't have DATE() function
+    const targetDate = f;
+    let dateFiltered = rows.filter((t) => {
+      const trayectoDate = new Date(t.hora).toISOString().split("T")[0];
+      return trayectoDate === targetDate;
+    });
     const haversineKm = (lat1, lon1, lat2, lon2) => {
       const dLat = toRad(lat2 - lat1);
       const dLon = toRad(lon2 - lon1);
@@ -1094,8 +1059,8 @@ async function buscarTrayectos(req, res) {
       return EARTH_RADIUS_KM * c;
     };
     let filtered = [];
-    if (rows.length > 0) {
-      filtered = rows.filter((t) => {
+    if (dateFiltered.length > 0) {
+      filtered = dateFiltered.filter((t) => {
         const dOrigin = haversineKm(
           userOriginCoords.lat,
           userOriginCoords.lng,
@@ -1134,7 +1099,6 @@ async function buscarTrayectos(req, res) {
 
     const userId = req.user?.id;
     const ratedIds = await getRatedTrayectoIdsForUser(
-      connection,
       userId,
       trayectosConImagen.map((t) => t.id),
     );
@@ -1166,24 +1130,21 @@ async function buscarTrayectos(req, res) {
 }
 
 async function updateLatLong(req, res) {
-  const connection = await database.getConnection();
-  const [result] = await connection.query(
-    "SELECT id,origen, destino FROM trayectos",
-  );
-  for (let i = 0; i < result.length; i++) {
-    const { id, origen, destino } = result[i];
+  const trayectos = await prisma.trayecto.findMany({
+    select: { id: true, origen: true, destino: true },
+  });
+  for (const { id, origen, destino } of trayectos) {
     const originCoords = await GoogleMapsProvider.geocodeAddress(origen);
     const destinationCoords = await GoogleMapsProvider.geocodeAddress(destino);
-    await connection.query(
-      "UPDATE trayectos SET origen_lat = ?, origen_lng = ?, destino_lat = ?, destino_lng = ? WHERE id = ?",
-      [
-        originCoords.lat,
-        originCoords.lng,
-        destinationCoords.lat,
-        destinationCoords.lng,
-        id,
-      ],
-    );
+    await prisma.trayecto.update({
+      where: { id },
+      data: {
+        origen_lat: originCoords.lat,
+        origen_lng: originCoords.lng,
+        destino_lat: destinationCoords.lat,
+        destino_lng: destinationCoords.lng,
+      },
+    });
   }
 
   return res.sendStatus(204);
@@ -1191,24 +1152,28 @@ async function updateLatLong(req, res) {
 
 async function updateLatLongById(req, res) {
   const { id } = req.params;
-  const connection = await database.getConnection();
-  const [result] = await connection.query(
-    "SELECT id,origen, destino FROM trayectos WHERE id = ?",
-    [id],
+  const trayecto = await prisma.trayecto.findUnique({
+    where: { id },
+    select: { origen: true, destino: true },
+  });
+  if (!trayecto) {
+    return res
+      .status(404)
+      .send({ status: "Error", message: "Trayecto no encontrado" });
+  }
+  const originCoords = await GoogleMapsProvider.geocodeAddress(trayecto.origen);
+  const destinationCoords = await GoogleMapsProvider.geocodeAddress(
+    trayecto.destino,
   );
-  const { origen, destino } = result[0];
-  const originCoords = await GoogleMapsProvider.geocodeAddress(origen);
-  const destinationCoords = await GoogleMapsProvider.geocodeAddress(destino);
-  await connection.query(
-    "UPDATE trayectos SET origen_lat = ?, origen_lng = ?, destino_lat = ?, destino_lng = ? WHERE id = ?",
-    [
-      originCoords.lat,
-      originCoords.lng,
-      destinationCoords.lat,
-      destinationCoords.lng,
-      id,
-    ],
-  );
+  await prisma.trayecto.update({
+    where: { id },
+    data: {
+      origen_lat: originCoords.lat,
+      origen_lng: originCoords.lng,
+      destino_lat: destinationCoords.lat,
+      destino_lng: destinationCoords.lng,
+    },
+  });
 
   return res.sendStatus(204);
 }

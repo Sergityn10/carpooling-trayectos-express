@@ -1,5 +1,5 @@
 import cron from "node-cron";
-import { database } from "./database.js";
+import { prisma } from "./database.js";
 import { UsersAPI } from "./utils/users-api.js";
 import {
   sendTrayectoAPuntoDeComenzar,
@@ -76,12 +76,16 @@ async function deleteTrayectoChatIfExists(trayectoId) {
 }
 
 async function tickCleanupFinalizedTrayectoChats() {
-  const connection = await database.getConnection();
-  const [trayectos] = await connection.query(
-    "SELECT id FROM trayectos WHERE status = 'finalizado' AND DATE_ADD(hora, INTERVAL 2 DAY) <= NOW()",
-  );
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  const trayectos = await prisma.trayecto.findMany({
+    where: {
+      status: "finalizado",
+      hora: { lte: twoDaysAgo },
+    },
+    select: { id: true },
+  });
 
-  for (const t of trayectos ?? []) {
+  for (const t of trayectos) {
     try {
       await deleteTrayectoChatIfExists(t.id);
     } catch (e) {
@@ -90,15 +94,19 @@ async function tickCleanupFinalizedTrayectoChats() {
   }
 }
 
-export async function notifyTrayectoEnCurso(connection, trayecto) {
-  const [reservas] = await connection.query(
-    "SELECT DISTINCT user_id FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
-    [trayecto.id],
-  );
+export async function notifyTrayectoEnCurso(trayecto) {
+  const reservas = await prisma.reserva.findMany({
+    where: {
+      id_trayecto: trayecto.id,
+      status: { not: "canceled" },
+    },
+    select: { user_id: true },
+    distinct: ["user_id"],
+  });
 
   const userIds = new Set([
     trayecto.conductor,
-    ...(reservas ?? []).map((r) => r.user_id),
+    ...reservas.map((r) => r.user_id),
   ]);
   const emails = [];
 
@@ -125,13 +133,17 @@ export async function notifyTrayectoEnCurso(connection, trayecto) {
   }
 }
 
-export async function notifyTrayectoFinalizado(connection, trayecto) {
-  const [reservas] = await connection.query(
-    "SELECT DISTINCT user_id FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
-    [trayecto.id],
-  );
+export async function notifyTrayectoFinalizado(trayecto) {
+  const reservas = await prisma.reserva.findMany({
+    where: {
+      id_trayecto: trayecto.id,
+      status: { not: "canceled" },
+    },
+    select: { user_id: true },
+    distinct: ["user_id"],
+  });
 
-  const userIds = new Set([...(reservas ?? []).map((r) => r.user_id)]);
+  const userIds = new Set([...reservas.map((r) => r.user_id)]);
   const emails = [];
 
   for (const uid of userIds) {
@@ -160,40 +172,61 @@ export async function notifyTrayectoFinalizado(connection, trayecto) {
 }
 
 async function tickTrayectoStatusAndNotify() {
-  const connection = await database.getConnection();
+  const now = new Date();
+  const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
 
-  const [toStart] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND hora <= NOW()",
-  );
+  const toStart = await prisma.trayecto.findMany({
+    where: {
+      status: "programado",
+      hora: { lte: now },
+    },
+    select: {
+      id: true,
+      origen: true,
+      destino: true,
+      hora: true,
+      conductor: true,
+    },
+  });
 
-  for (const trayecto of toStart ?? []) {
-    const [result] = await connection.query(
-      "UPDATE trayectos SET status = 'en curso' WHERE id = ? AND status = 'programado'",
-      [trayecto.id],
-    );
+  for (const trayecto of toStart) {
+    const result = await prisma.trayecto.updateMany({
+      where: { id: trayecto.id, status: "programado" },
+      data: { status: "en curso" },
+    });
 
-    if (result?.affectedRows > 0) {
+    if (result.count > 0) {
       try {
-        await notifyTrayectoEnCurso(connection, trayecto);
+        await notifyTrayectoEnCurso(trayecto);
       } catch (e) {
         console.error("Error enviando emails de trayecto en curso:", e);
       }
     }
   }
 
-  const [toFinalize] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'en curso' AND DATE_ADD(hora, INTERVAL 2 DAY) <= NOW()",
-  );
+  const toFinalize = await prisma.trayecto.findMany({
+    where: {
+      status: "en curso",
+      hora: { lte: twoDaysAgo },
+    },
+    select: {
+      id: true,
+      origen: true,
+      destino: true,
+      hora: true,
+      conductor: true,
+    },
+  });
 
-  for (const trayecto of toFinalize ?? []) {
-    const [result] = await connection.query(
-      "UPDATE trayectos SET status = 'finalizado' WHERE id = ? AND status = 'en curso'",
-      [trayecto.id],
-    );
+  for (const trayecto of toFinalize) {
+    const result = await prisma.trayecto.updateMany({
+      where: { id: trayecto.id, status: "en curso" },
+      data: { status: "finalizado" },
+    });
 
-    if (result?.affectedRows > 0) {
+    if (result.count > 0) {
       try {
-        await notifyTrayectoFinalizado(connection, trayecto);
+        await notifyTrayectoFinalizado(trayecto);
       } catch (e) {
         console.error("Error enviando emails de trayecto finalizado:", e);
       }
@@ -202,21 +235,37 @@ async function tickTrayectoStatusAndNotify() {
 }
 
 async function tickTrayectosAPuntoDeComenzar() {
-  const connection = await database.getConnection();
+  const now = new Date();
+  const fifteenMinLater = new Date(now.getTime() + 15 * 60 * 1000);
 
-  const [trayectos] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND (notified_15min IS NULL OR notified_15min = 0) AND hora > NOW() AND hora <= DATE_ADD(NOW(), INTERVAL 15 MINUTE)",
-  );
+  const trayectos = await prisma.trayecto.findMany({
+    where: {
+      status: "programado",
+      notified_15min: 0,
+      hora: { gt: now, lte: fifteenMinLater },
+    },
+    select: {
+      id: true,
+      origen: true,
+      destino: true,
+      hora: true,
+      conductor: true,
+    },
+  });
 
-  for (const trayecto of trayectos ?? []) {
-    const [reservas] = await connection.query(
-      "SELECT DISTINCT user_id FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
-      [trayecto.id],
-    );
+  for (const trayecto of trayectos) {
+    const reservas = await prisma.reserva.findMany({
+      where: {
+        id_trayecto: trayecto.id,
+        status: { not: "canceled" },
+      },
+      select: { user_id: true },
+      distinct: ["user_id"],
+    });
 
     const userIds = new Set([
       trayecto.conductor,
-      ...(reservas ?? []).map((r) => r.user_id),
+      ...reservas.map((r) => r.user_id),
     ]);
     const emails = [];
 
@@ -245,10 +294,10 @@ async function tickTrayectosAPuntoDeComenzar() {
       }
     }
 
-    await connection.query(
-      "UPDATE trayectos SET notified_15min = 1 WHERE id = ? AND (notified_15min IS NULL OR notified_15min = 0)",
-      [trayecto.id],
-    );
+    await prisma.trayecto.updateMany({
+      where: { id: trayecto.id, notified_15min: 0 },
+      data: { notified_15min: 1 },
+    });
   }
 }
 
