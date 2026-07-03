@@ -12,6 +12,7 @@ import { utilsAuthentication } from "./utils/authentication.js";
 import { UbicacionesController } from "./controllers/ubicaciones.js";
 import { FrequentRoutesController } from "./controllers/frequents-routes.js";
 import { RecorridosController } from "./controllers/recorridos.js";
+import { RecogidasController } from "./controllers/recogidas.js";
 import {
   startTrayectoSoonReminderCron,
   startTrayectoChatCleanupCron,
@@ -147,6 +148,38 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     RecorridosController.obtenerRecorrido(req, res);
+  },
+);
+
+app.post(
+  "/api/trayecto/:id/recoger",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    RecogidasController.crearRecogida(req, res);
+  },
+);
+
+app.get(
+  "/api/trayecto/:id/recoger",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    RecogidasController.obtenerRecogidas(req, res);
+  },
+);
+
+app.get(
+  "/api/trayecto/:id/recoger/:idUser",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    RecogidasController.obtenerRecogidaPorUsuario(req, res);
+  },
+);
+
+app.delete(
+  "/api/trayecto/:id/recoger/:idUser",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    RecogidasController.eliminarRecogida(req, res);
   },
 );
 app.get(

@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { ReservaSchema } from "../schemas/reserva.js";
-import { database } from "../database.js";
+import { prisma } from "../database.js";
 import dotenv from "dotenv";
 import { UsersAPI } from "../utils/users-api.js";
 
@@ -12,22 +12,22 @@ let frontend_url = process.env.FRONTEND_URL;
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-async function getRatedTrayectoIdsForUser(connection, userId, trayectoIds) {
+async function getRatedTrayectoIdsForUser(userId, trayectoIds) {
   if (!userId) return new Set();
   const ids = (trayectoIds ?? [])
     .map((x) => String(x))
     .filter((x) => x.length > 0);
   if (ids.length === 0) return new Set();
 
-  const placeholders = ids.map(() => "?").join(",");
-  const [rows] = await connection.query(
-    `SELECT DISTINCT id_trayecto FROM comments WHERE user_id_commentator = ? AND id_trayecto IN (${placeholders})`,
-    [String(userId), ...ids],
-  );
-  return new Set((rows ?? []).map((r) => String(r.id_trayecto)));
+  const comments = await prisma.comment.findMany({
+    where: { user_id_commentator: String(userId), id_trayecto: { in: ids } },
+    select: { id_trayecto: true },
+    distinct: ["id_trayecto"],
+  });
+  return new Set(comments.map((c) => String(c.id_trayecto)));
 }
 
-async function getRatedUserIdsForTrayecto(connection, trayectoId, userIds) {
+async function getRatedUserIdsForTrayecto(trayectoId, userIds) {
   const id = String(trayectoId);
   if (!id) return new Set();
 
@@ -36,12 +36,12 @@ async function getRatedUserIdsForTrayecto(connection, trayectoId, userIds) {
     .filter(Boolean);
   if (users.length === 0) return new Set();
 
-  const placeholders = users.map(() => "?").join(",");
-  const [rows] = await connection.query(
-    `SELECT DISTINCT user_id_commentator FROM comments WHERE id_trayecto = ? AND user_id_commentator IN (${placeholders})`,
-    [id, ...users],
-  );
-  return new Set((rows ?? []).map((r) => r.user_id_commentator));
+  const comments = await prisma.comment.findMany({
+    where: { id_trayecto: id, user_id_commentator: { in: users } },
+    select: { user_id_commentator: true },
+    distinct: ["user_id_commentator"],
+  });
+  return new Set(comments.map((c) => c.user_id_commentator));
 }
 
 function getAuthHeaders(req) {
@@ -63,12 +63,18 @@ function getAuthHeaders(req) {
   return { token, headers };
 }
 
-async function getReservaWithTrayecto(connection, idReserva) {
-  const [rows] = await connection.query(
-    "SELECT r.*, t.conductor AS conductor, t.status AS trayecto_status FROM reservas r JOIN trayectos t ON t.id = r.id_trayecto WHERE r.id_reserva = ?",
-    [idReserva],
-  );
-  return rows?.[0] ?? null;
+async function getReservaWithTrayecto(idReserva) {
+  const reserva = await prisma.reserva.findUnique({
+    where: { id_reserva: idReserva },
+    include: { Trayecto: { select: { conductor: true, status: true } } },
+  });
+  if (!reserva) return null;
+  const { Trayecto, ...rest } = reserva;
+  return {
+    ...rest,
+    conductor: Trayecto.conductor,
+    trayecto_status: Trayecto.status,
+  };
 }
 
 async function addReserva(req, res) {
@@ -92,18 +98,21 @@ async function addReserva(req, res) {
     "en el trayecto ID:",
     trayecto_id,
   );
-  const connection = await database.getConnection();
-
-  let trayecto = await connection.query(
-    "SELECT disponible, precio,origen,conductor, destino FROM trayectos WHERE id = ?",
-    [trayecto_id],
-  );
-  if (trayecto[0].length === 0) {
+  const trayecto = await prisma.trayecto.findUnique({
+    where: { id: trayecto_id },
+    select: {
+      disponible: true,
+      precio: true,
+      origen: true,
+      conductor: true,
+      destino: true,
+    },
+  });
+  if (!trayecto) {
     return res
       .status(404)
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
-  trayecto = trayecto[0][0];
 
   // Obtener el nombre del conductor desde el microservicio de usuarios
   const conductorInfo = await UsersAPI.fetchUserPublicInfo(
@@ -139,43 +148,43 @@ async function addReserva(req, res) {
   }
 
   // Inserta la reserva en la base de datos
-  let result = null;
   let duplicado = false;
   let reservaId = randomUUID();
   try {
-    [result] = await connection.query(
-      "INSERT INTO reservas (id_reserva, user_id, id_trayecto, status) VALUES (?, ?, ?, ?)",
-      [reservaId, userId, trayecto_id, reserva.status],
-    );
+    await prisma.reserva.create({
+      data: {
+        id_reserva: reservaId,
+        user_id: userId,
+        id_trayecto: trayecto_id,
+        status: reserva.status,
+      },
+    });
   } catch (error) {
-    switch (error.code) {
-      case "ER_NO_REFERENCED_ROW_2":
+    if (error.code === "P2003") {
+      return res.status(400).send({
+        status: "Error",
+        message: "El usuario o trayecto no existen",
+      });
+    }
+    if (error.code === "P2002") {
+      duplicado = true;
+      const existing = await prisma.reserva.findUnique({
+        where: {
+          user_id_id_trayecto: { user_id: userId, id_trayecto: trayecto_id },
+        },
+      });
+      if (existing.status === "completed") {
         return res.status(400).send({
           status: "Error",
-          message: "El usuario o trayecto no existen",
+          message: "El usuario ya tiene una reserva para este trayecto",
         });
-        break;
-      case "ER_DUP_ENTRY":
-        duplicado = true;
-        // return res.status(400).send({ status: "Error", message: "El usuario ya tiene una reserva para este trayecto" });
-        reserva = await connection.query(
-          "SELECT * FROM reservas WHERE user_id = ? AND id_trayecto = ?",
-          [userId, trayecto_id],
-        );
-        if (reserva[0][0].status === "completed") {
-          return res.status(400).send({
-            status: "Error",
-            message: "El usuario ya tiene una reserva para este trayecto",
-          });
-        }
-        reserva = reserva[0][0];
-        reservaId = reserva.id_reserva;
-        break;
-      default:
-        return res
-          .status(500)
-          .send({ status: "Error", message: "Error al crear la reserva" });
-        break;
+      }
+      reserva = existing;
+      reservaId = existing.id_reserva;
+    } else {
+      return res
+        .status(500)
+        .send({ status: "Error", message: "Error al crear la reserva" });
     }
   }
 
@@ -188,9 +197,7 @@ async function addReserva(req, res) {
   if (!MESSAGES_URL) {
     if (!duplicado) {
       try {
-        await connection.query("DELETE FROM reservas WHERE id_reserva = ?", [
-          reservaId,
-        ]);
+        await prisma.reserva.delete({ where: { id_reserva: reservaId } });
       } catch (e) {
         console.error(
           "Error haciendo rollback de reserva tras MESSAGES_URL missing:",
@@ -303,9 +310,7 @@ async function addReserva(req, res) {
     console.error("Error uniéndose al chat del trayecto:", error);
     if (!duplicado) {
       try {
-        await connection.query("DELETE FROM reservas WHERE id_reserva = ?", [
-          reservaId,
-        ]);
+        await prisma.reserva.delete({ where: { id_reserva: reservaId } });
       } catch (e) {
         console.error(
           "Error haciendo rollback de reserva tras fallo uniendo al chat:",
@@ -321,10 +326,10 @@ async function addReserva(req, res) {
 
   reservaId = duplicado ? reserva.id_reserva : reservaId;
   try {
-    await connection.query(
-      "UPDATE reservas SET stripe_checkout_session_id = ? WHERE id_reserva = ?",
-      [checkout_session.id, reservaId],
-    );
+    await prisma.reserva.update({
+      where: { id_reserva: reservaId },
+      data: { stripe_checkout_session_id: checkout_session.id },
+    });
   } catch (e) {
     console.error("Error guardando stripe_checkout_session_id en reserva:", e);
   }
@@ -346,23 +351,19 @@ async function addReserva(req, res) {
 
 async function getReservasByTravelId(req, res) {
   const { travelId } = req.params;
-  const connection = await database.getConnection();
-  const trayecto = await connection.query(
-    "SELECT * FROM trayectos WHERE id = ?",
-    [travelId],
-  );
-  if (trayecto[0].length === 0) {
+  const trayecto = await prisma.trayecto.findUnique({
+    where: { id: travelId },
+  });
+  if (!trayecto) {
     return res
       .status(404)
       .send({ status: "Error", message: "No se ha encontrado este trayecto" });
   }
-  let pasajerosList = await connection.query(
-    "SELECT * FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
-    [travelId],
-  );
-  pasajerosList = pasajerosList[0];
+  let pasajerosList = await prisma.reserva.findMany({
+    where: { id_trayecto: travelId, NOT: { status: "canceled" } },
+  });
   //Agregar info adicional como la img_perfil y el nombre
-  if (pasajerosList.length === 0 || pasajerosList.affectedRows === 0) {
+  if (pasajerosList.length === 0) {
     return res.status(200).send({
       status: "Success",
       message: "No se ha encontrado este trayecto o todavia no tiene reservas",
@@ -376,11 +377,10 @@ async function getReservasByTravelId(req, res) {
       );
 
       // Fetch user preferences
-      const [preferenceRows] = await connection.query(
-        "SELECT * FROM user_preferences WHERE user_id = ?",
-        [pasajero.user_id],
-      );
-      const preferences = preferenceRows[0] || {};
+      const preferences =
+        (await prisma.userPreference.findFirst({
+          where: { user_id: pasajero.user_id },
+        })) || {};
 
       return {
         ...pasajero,
@@ -392,7 +392,6 @@ async function getReservasByTravelId(req, res) {
   );
 
   const ratedUsernames = await getRatedUserIdsForTrayecto(
-    connection,
     travelId,
     pasajerosList.map((r) => r.id), // Careful: names might not be usernames. We might need username for comments.
   );
@@ -423,22 +422,18 @@ async function obtenerMisReservas(req, res) {
     });
   }
 
-  const connection = await database.getConnection();
-  let pasajerosList = await connection.query(
-    "SELECT * FROM reservas WHERE user_id = ?",
-    [userId],
-  );
-  if (pasajerosList[0].length === 0) {
+  let pasajerosList = await prisma.reserva.findMany({
+    where: { user_id: userId },
+  });
+  if (pasajerosList.length === 0) {
     return res.status(200).send({
       status: "Success",
       message: "No se ha encontrado este trayecto o todavia no tiene reservas",
-      pasajerosList: pasajerosList[0],
+      pasajerosList,
     });
   }
-  pasajerosList = pasajerosList[0];
 
   const ratedTrayectoIds = await getRatedTrayectoIdsForUser(
-    connection,
     userId,
     pasajerosList.map((r) => r.id_trayecto),
   );
@@ -449,11 +444,9 @@ async function obtenerMisReservas(req, res) {
 
   pasajerosList = await Promise.all(
     pasajerosList.map(async (reserva) => {
-      const [trayectoRows] = await connection.query(
-        "SELECT * FROM trayectos WHERE id = ?",
-        [reserva.id_trayecto],
-      );
-      const trayecto = trayectoRows[0];
+      const trayecto = await prisma.trayecto.findUnique({
+        where: { id: reserva.id_trayecto },
+      });
 
       const conductorInfo = await UsersAPI.fetchUserPublicInfo(
         String(trayecto.conductor),
@@ -491,8 +484,7 @@ async function deleteReserva(req, res) {
       .send({ status: "Error", message: "USUARIOS_URL no configurado" });
   }
 
-  const connection = await database.getConnection();
-  const reserva = await getReservaWithTrayecto(connection, idReserva);
+  const reserva = await getReservaWithTrayecto(idReserva);
   if (!reserva) {
     return res
       .status(404)
@@ -515,16 +507,19 @@ async function deleteReserva(req, res) {
 
   let paymentIntentId = reserva.stripe_payment_intent_id ?? null;
   if (!paymentIntentId && reserva.stripe_checkout_session_id) {
-    const [rows] = await connection.query(
-      "SELECT stripe_payment_intent_id FROM pagos WHERE stripe_checkout_session_id = ? AND stripe_payment_intent_id IS NOT NULL ORDER BY id DESC LIMIT 1",
-      [reserva.stripe_checkout_session_id],
-    );
-    paymentIntentId = rows?.[0]?.stripe_payment_intent_id ?? null;
+    const pago = await prisma.pago.findFirst({
+      where: {
+        stripe_checkout_session_id: reserva.stripe_checkout_session_id,
+        NOT: { stripe_payment_intent_id: null },
+      },
+      orderBy: { id: "desc" },
+    });
+    paymentIntentId = pago?.stripe_payment_intent_id ?? null;
     if (paymentIntentId) {
-      await connection.query(
-        "UPDATE reservas SET stripe_payment_intent_id = ? WHERE id_reserva = ?",
-        [paymentIntentId, idReserva],
-      );
+      await prisma.reserva.update({
+        where: { id_reserva: idReserva },
+        data: { stripe_payment_intent_id: paymentIntentId },
+      });
     }
   }
 
@@ -567,9 +562,6 @@ async function deleteReserva(req, res) {
   }
 
   try {
-    let transactionStarted = false;
-    await connection.query("START TRANSACTION");
-    transactionStarted = true;
     let trayectoId = reserva.id_trayecto;
     let getChat = await fetch(
       `${process.env.MESSAGES_URL}/api/chats/trip/${trayectoId}`,
@@ -597,49 +589,21 @@ async function deleteReserva(req, res) {
       },
     );
 
-    const [result] = await connection.query(
-      "UPDATE reservas SET status = 'canceled' WHERE id_reserva = ?",
-      [idReserva],
-    );
-    if (result.affectedRows === 0) {
-      if (transactionStarted) {
-        await connection.query("ROLLBACK");
-      }
+    await prisma.$transaction([
+      prisma.reserva.update({
+        where: { id_reserva: idReserva },
+        data: { status: "canceled" },
+      }),
+      prisma.$executeRawUnsafe(
+        "UPDATE trayectos SET disponible = CASE WHEN disponible < plazas THEN disponible + 1 ELSE disponible END WHERE id = ?",
+        reserva.id_trayecto,
+      ),
+    ]);
+  } catch (e) {
+    if (e.code === "P2025") {
       return res
         .status(404)
         .send({ status: "Error", message: "Reserva no encontrada" });
-    }
-
-    await connection.query(
-      "UPDATE trayectos SET disponible = CASE WHEN disponible < plazas THEN disponible + 1 ELSE disponible END WHERE id = ?",
-      [reserva.id_trayecto],
-    );
-
-    try {
-      await connection.query("COMMIT");
-    } catch (commitError) {
-      const msg = String(commitError?.message ?? "");
-      if (!msg.includes("no transaction is active")) {
-        throw commitError;
-      }
-      console.error("Error en deleteReserva (during commit):", commitError);
-    }
-  } catch (e) {
-    const msg = String(e?.message ?? "");
-    if (msg.includes("no transaction is active")) {
-      console.error("Error en deleteReserva (during commit):", e);
-      return res.status(200).send({
-        status: "Success",
-        message: "Reserva cancelada correctamente",
-      });
-    }
-
-    try {
-      if (typeof transactionStarted !== "undefined" && transactionStarted) {
-        await connection.query("ROLLBACK");
-      }
-    } catch (_) {
-      // ignore
     }
     return res.status(500).send({
       status: "Error",
@@ -667,8 +631,7 @@ async function confirmarViajeExitoso(req, res) {
       .send({ status: "Error", message: "USUARIOS_URL no configurado" });
   }
 
-  const connection = await database.getConnection();
-  const reserva = await getReservaWithTrayecto(connection, idReserva);
+  const reserva = await getReservaWithTrayecto(idReserva);
   if (!reserva) {
     return res
       .status(404)
@@ -713,17 +676,20 @@ async function confirmarViajeExitoso(req, res) {
 
   let paymentIntentId = reserva.stripe_payment_intent_id ?? null;
   if (!paymentIntentId && reserva.stripe_checkout_session_id) {
-    const [rows] = await connection.query(
-      "SELECT stripe_payment_intent_id FROM pagos WHERE stripe_checkout_session_id = ? AND stripe_payment_intent_id IS NOT NULL ORDER BY id DESC LIMIT 1",
-      [reserva.stripe_checkout_session_id],
-    );
+    const pago = await prisma.pago.findFirst({
+      where: {
+        stripe_checkout_session_id: reserva.stripe_checkout_session_id,
+        NOT: { stripe_payment_intent_id: null },
+      },
+      orderBy: { id: "desc" },
+    });
     //ACTUALIZAR LA RESERVA
-    paymentIntentId = rows?.[0]?.stripe_payment_intent_id ?? null;
+    paymentIntentId = pago?.stripe_payment_intent_id ?? null;
     if (paymentIntentId) {
-      await connection.query(
-        "UPDATE reservas SET stripe_payment_intent_id = ? WHERE id_reserva = ?",
-        [paymentIntentId, idReserva],
-      );
+      await prisma.reserva.update({
+        where: { id_reserva: idReserva },
+        data: { stripe_payment_intent_id: paymentIntentId },
+      });
     }
   }
 
@@ -772,9 +738,10 @@ async function confirmarViajeExitoso(req, res) {
     });
   }
 
-  await connection.query(
+  await prisma.$executeRawUnsafe(
     "UPDATE reservas SET trip_outcome = 'success', trip_outcome_reason = NULL, trip_outcome_at = NOW(), stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ?), stripe_payment_intent_status = COALESCE(stripe_payment_intent_status, 'captured') WHERE id_reserva = ?",
-    [paymentIntentId, idReserva],
+    paymentIntentId,
+    idReserva,
   );
 
   return res.status(200).send({
@@ -801,8 +768,7 @@ async function reclamarViaje(req, res) {
       .send({ status: "Error", message: "reason es requerido" });
   }
 
-  const connection = await database.getConnection();
-  const reserva = await getReservaWithTrayecto(connection, idReserva);
+  const reserva = await getReservaWithTrayecto(idReserva);
   if (!reserva) {
     return res
       .status(404)
@@ -826,9 +792,10 @@ async function reclamarViaje(req, res) {
     });
   }
 
-  await connection.query(
+  await prisma.$executeRawUnsafe(
     "UPDATE reservas SET trip_outcome = 'issue', trip_outcome_reason = ?, trip_outcome_at = NOW() WHERE id_reserva = ?",
-    [reason, idReserva],
+    reason,
+    idReserva,
   );
 
   return res

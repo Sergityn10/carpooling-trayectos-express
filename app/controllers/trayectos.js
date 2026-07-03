@@ -777,6 +777,26 @@ async function iniciarTrayecto(req, res) {
     console.error("Error notificando trayecto en curso:", e);
   }
 
+  try {
+    const tipoEvento = await prisma.tipoEvento.findUnique({
+      where: { nombre: "comienzo" },
+    });
+    if (tipoEvento) {
+      await prisma.eventoTrayecto.create({
+        data: {
+          id: randomUUID(),
+          id_trayecto: trayectoId,
+          user_id: userId,
+          id_tipo_evento: tipoEvento.id,
+          lat: trayecto.origen_lat ?? 0,
+          lng: trayecto.origen_lng ?? 0,
+        },
+      });
+    }
+  } catch (e) {
+    console.error("Error creando evento de comienzo:", e);
+  }
+
   return res.status(200).send({
     status: "Success",
     message: "Trayecto iniciado y notificado correctamente",
@@ -845,6 +865,26 @@ async function finalizarTrayecto(req, res) {
     await notifyTrayectoFinalizado(trayecto);
   } catch (e) {
     console.error("Error notificando trayecto finalizado:", e);
+  }
+
+  try {
+    const tipoEvento = await prisma.tipoEvento.findUnique({
+      where: { nombre: "finalizacion" },
+    });
+    if (tipoEvento) {
+      await prisma.eventoTrayecto.create({
+        data: {
+          id: randomUUID(),
+          id_trayecto: trayectoId,
+          user_id: userId,
+          id_tipo_evento: tipoEvento.id,
+          lat: trayecto.destino_lat ?? 0,
+          lng: trayecto.destino_lng ?? 0,
+        },
+      });
+    }
+  } catch (e) {
+    console.error("Error creando evento de finalizacion:", e);
   }
 
   return res.status(200).send({

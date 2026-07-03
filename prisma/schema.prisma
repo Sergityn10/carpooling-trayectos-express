@@ -177,3 +177,33 @@ model Recorrido {
 
   @@map("recorridos")
 }
+
+model TipoEvento {
+  id          Int      @id @default(autoincrement())
+  nombre      String   @unique @db.VarChar(50)
+  descripcion String?  @db.Text
+
+  EventosTrayectos EventoTrayecto[]
+
+  @@map("tipos_eventos")
+}
+
+model EventoTrayecto {
+  id            String   @id @db.VarChar(36)
+  id_trayecto   String   @db.VarChar(36)
+  id_reserva    String?  @db.VarChar(36)
+  user_id       String   @db.VarChar(36)
+  id_tipo_evento Int
+  lat           Float
+  lng           Float
+  created_at    DateTime @default(now())
+
+  TipoEvento TipoEvento @relation(fields: [id_tipo_evento], references: [id])
+
+  @@index([id_trayecto], name: "idx_eventos_trayecto")
+  @@index([user_id], name: "idx_eventos_user_id")
+  @@index([id_trayecto, user_id], name: "idx_eventos_trayecto_user")
+  @@index([id_tipo_evento], name: "idx_eventos_tipo")
+
+  @@map("eventos_trayectos")
+}

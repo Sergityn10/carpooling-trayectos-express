@@ -6,11 +6,15 @@ const USUARIOS_URL = process.env.USUARIOS_URL;
 async function fetchUserPublicInfo(userId, { headers = {} } = {}) {
   if (!userId) return null;
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
     const res = await fetch(`${USUARIOS_URL}/api/users/${userId}/info`, {
       method: "GET",
       credentials: "include",
       headers: { "Content-Type": "application/json", ...headers },
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     if (!res.ok) return null;
     const body = await res.json();
     return body?.data ?? null;

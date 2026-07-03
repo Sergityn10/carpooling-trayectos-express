@@ -75,6 +75,25 @@ const initDatabase = async () => {
       ],
     });
   }
+
+  // Seed tipos_eventos if empty
+  const eventoCount = await prisma.tipoEvento.count();
+  if (eventoCount === 0) {
+    await prisma.tipoEvento.createMany({
+      data: [
+        {
+          nombre: "solicitud",
+          descripcion: "El pasajero solicita ser recogido",
+        },
+        { nombre: "comienzo", descripcion: "El trayecto ha comenzado" },
+        { nombre: "finalizacion", descripcion: "El trayecto ha finalizado" },
+        {
+          nombre: "recogida",
+          descripcion: "El pasajero ha sido recogido por el conductor",
+        },
+      ],
+    });
+  }
 };
 
 const getConnection = async () => {
