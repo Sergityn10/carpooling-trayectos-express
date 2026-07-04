@@ -245,7 +245,8 @@ POST /api/trayecto
   "conductor": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "disponible": 4,
   "precio": 0,
-  "routeIndex": 0
+  "routeIndex": 0,
+  "evento_id": "f1e2d3c4-b5a6-7890-abcd-ef1234567890"
 }
 ```
 
@@ -260,6 +261,7 @@ POST /api/trayecto
 | `disponible` | number        | No        | 0–7 (por defecto = `plazas`)                               |
 | `precio`     | number        | Sí        | >= 0 (se sobrescribe con cálculo automático)               |
 | `routeIndex` | number        | No        | Int                                                        |
+| `evento_id`  | string (UUID) | No        | UUID del evento asociado (para búsqueda rápida por evento) |
 
 **Respuesta 201:**
 
@@ -654,6 +656,122 @@ DELETE /api/trayecto/:id
 **Errores:**
 
 - `404` — Trayecto no encontrado.
+
+---
+
+### 17. Crear trayecto hacia un evento
+
+```
+POST /api/trayecto/evento
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Crea un nuevo trayecto cuyo destino es la ubicación de un evento. Realiza una petición al microservicio de usuarios (`GET /api/eventos/:evento_id`) para obtener la ubicación del evento y la usa como `destino` del trayecto. El resto del proceso es idéntico al de crear un trayecto normal: geocodificación con Google Maps, cálculo automático del precio según la provincia y creación del chat asociado.
+
+**Body (JSON):**
+
+```json
+{
+  "evento_id": "f1e2d3c4-b5a6-7890-abcd-ef1234567890",
+  "origen": "Madrid, Calle Gran Vía 1",
+  "fecha": "2025-01-15",
+  "hora": "10:00",
+  "plazas": 4,
+  "conductor": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "disponible": 4,
+  "precio": 0,
+  "routeIndex": 0
+}
+```
+
+| Campo        | Tipo          | Requerido | Validación                                                 |
+| ------------ | ------------- | --------- | ---------------------------------------------------------- |
+| `evento_id`  | string (UUID) | Sí        | UUID del evento hacia el que se dirige el trayecto         |
+| `origen`     | string        | Sí        | min 2, max 100                                             |
+| `fecha`      | string        | Sí        | Formato `YYYY-MM-DD`                                       |
+| `hora`       | string        | Sí        | Formato `HH:MM` (24h)                                      |
+| `plazas`     | number        | Sí        | 1–7                                                        |
+| `conductor`  | string (UUID) | Sí        | UUID del conductor (si no se envía, usa `req.user.userId`) |
+| `disponible` | number        | No        | 0–7 (por defecto = `plazas`)                               |
+| `precio`     | number        | Sí        | >= 0 (se sobrescribe con cálculo automático)               |
+| `routeIndex` | number        | No        | Int                                                        |
+
+> **Nota:** No es necesario enviar `destino`; se obtiene automáticamente desde la información del evento en el microservicio de usuarios. El campo `evento_id` se almacena en el trayecto para permitir búsquedas rápidas.
+
+**Respuesta 201:**
+
+```json
+{
+  "status": "Success",
+  "message": "Trayecto creado correctamente",
+  "trayecto": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "origen": "Madrid, Calle Gran Vía 1",
+    "destino": "Ubicación del evento",
+    "fecha": "2025-01-15",
+    "hora": "10:00",
+    "plazas": 4,
+    "conductor": "Juan Pérez",
+    "conductor_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "precio": 15
+  }
+}
+```
+
+**Errores:**
+
+- `400` — `evento_id` faltante, fecha inválida, conductor no existe, o el evento no tiene una ubicación válida.
+- `404` — No se pudo obtener la información del evento desde el microservicio de usuarios.
+- `502` — No se pudo calcular el precio del gasoil o error al crear el chat.
+
+---
+
+### 18. Obtener trayectos por evento
+
+```
+GET /api/trayecto/evento/:eventoId
+```
+
+**Autenticación:** Opcional (`tryAuthenticate`)
+
+**Descripción:** Devuelve todos los trayectos asociados a un evento específico (mediante el campo `evento_id`), excluyendo los cancelados. Ordenados por hora ascendente. Incluye nombre e imagen del conductor obtenidos del microservicio de usuarios, y si el usuario autenticado ha valorado cada trayecto.
+
+**Path params:**
+
+| Parámetro   | Tipo          | Descripción      |
+| ----------- | ------------- | ---------------- |
+| `eventoId`  | string (UUID) | ID del evento    |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "evento_id": "f1e2d3c4-b5a6-7890-abcd-ef1234567890",
+  "trayectos": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "origen": "Madrid",
+      "destino": "Ubicación del evento",
+      "hora": "2025-01-15T10:00:00.000Z",
+      "plazas": 4,
+      "conductor": "Juan Pérez",
+      "conductor_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "img_perfil": "https://...",
+      "disponible": 3,
+      "precio": 15,
+      "evento_id": "f1e2d3c4-b5a6-7890-abcd-ef1234567890",
+      "valorado": false
+    }
+  ]
+}
+```
+
+**Errores:**
+
+- `400` — `eventoId` faltante.
+- `500` — Error en el servidor.
 
 ---
 

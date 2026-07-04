@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS trayectos (
      destino_lat REAL NULL,
      destino_lng REAL NULL,
      notified_15min INTEGER NOT NULL DEFAULT 0,
+     evento_id TEXT NULL,
      FOREIGN KEY (conductor) REFERENCES users(id),
      CONSTRAINT chk_plazas CHECK (plazas >= 1 AND plazas <= 4),
      CONSTRAINT chk_trayecto_status CHECK (
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS trayectos (
  CREATE INDEX IF NOT EXISTS idx_trayectos_origen ON trayectos(origen_lat, origen_lng);
  CREATE INDEX IF NOT EXISTS idx_trayectos_destino ON trayectos(destino_lat, destino_lng);
  CREATE INDEX IF NOT EXISTS idx_trayectos_hora ON trayectos(hora);
+ CREATE INDEX IF NOT EXISTS idx_trayectos_evento_id ON trayectos(evento_id);
 
 --mysql
 CREATE TABLE IF NOT EXISTS trayectos (
@@ -42,6 +44,7 @@ CREATE TABLE IF NOT EXISTS trayectos (
     destino_lat DECIMAL(10, 8) NULL,
     destino_lng DECIMAL(11, 8) NULL,
     notified_15min TINYINT(1) NOT NULL DEFAULT 0,
+    evento_id VARCHAR(36) NULL,
     
     -- Relaciones
     CONSTRAINT fk_trayecto_conductor 
@@ -56,4 +59,5 @@ CREATE TABLE IF NOT EXISTS trayectos (
 CREATE INDEX idx_trayectos_origen_coords ON trayectos(origen_lat, origen_lng);
 CREATE INDEX idx_trayectos_destino_coords ON trayectos(destino_lat, destino_lng);
 CREATE INDEX idx_trayectos_hora ON trayectos(hora);
+CREATE INDEX idx_trayectos_evento_id ON trayectos(evento_id);
 

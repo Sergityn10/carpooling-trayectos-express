@@ -107,6 +107,22 @@ app.post(
   },
 );
 
+app.post(
+  "/api/trayecto/evento",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    TrayectosController.crearTrayectoEvento(req, res);
+  },
+);
+
+app.get(
+  "/api/trayecto/evento/:eventoId",
+  utilsAuthentication.tryAuthenticate,
+  async (req, res) => {
+    TrayectosController.obtenerTrayectosPorEvento(req, res);
+  },
+);
+
 app.put("/api/trayecto/update/id/:id", async (req, res) => {
   TrayectosController.updateLatLongById(req, res);
 });
