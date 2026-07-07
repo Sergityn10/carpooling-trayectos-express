@@ -1263,11 +1263,142 @@ async function updateLatLongById(req, res) {
   return res.sendStatus(204);
 }
 
+async function obtenerTrayectoCompleto(req, res) {
+  const { id } = req.params;
+
+  const trayecto = await prisma.trayecto.findUnique({
+    where: { id },
+  });
+
+  if (!trayecto) {
+    return res
+      .status(404)
+      .send({ status: "Error", message: "Trayecto no encontrado" });
+  }
+
+  // --- Conductor info ---
+  const conductorInfo = await UsersAPI.fetchUserPublicInfo(
+    String(trayecto.conductor),
+  );
+  const conductorName = conductorInfo?.name || "Desconocido";
+  const imgPerfil = conductorInfo?.img_perfil;
+
+  // --- Driver preferences ---
+  const driverPrefsRaw = await prisma.userPreference.findMany({
+    where: {
+      user_id: trayecto.conductor,
+      PreferenceDefinition: { is_active: 1 },
+    },
+    include: {
+      PreferenceDefinition: { select: { pref_key: true, value_type: true } },
+    },
+  });
+  const driverPreferences = {};
+  for (const p of driverPrefsRaw) {
+    driverPreferences[p.PreferenceDefinition.pref_key] = parsePreferenceValue(
+      p.PreferenceDefinition.value_type,
+      p.value,
+    );
+  }
+
+  // --- Passengers (reservas no canceladas) ---
+  const reservas = await prisma.reserva.findMany({
+    where: { id_trayecto: id, NOT: { status: "canceled" } },
+  });
+
+  const pasajeros = await Promise.all(
+    reservas.map(async (r) => {
+      const userInfo = await UsersAPI.fetchUserPublicInfo(String(r.user_id));
+      const prefsRaw = await prisma.userPreference.findMany({
+        where: {
+          user_id: r.user_id,
+          PreferenceDefinition: { is_active: 1 },
+        },
+        include: {
+          PreferenceDefinition: {
+            select: { pref_key: true, value_type: true },
+          },
+        },
+      });
+      const preferences = {};
+      for (const p of prefsRaw) {
+        preferences[p.PreferenceDefinition.pref_key] = parsePreferenceValue(
+          p.PreferenceDefinition.value_type,
+          p.value,
+        );
+      }
+      return {
+        id_reserva: r.id_reserva,
+        user_id: r.user_id,
+        status: r.status,
+        trip_outcome: r.trip_outcome,
+        nombre: userInfo?.name || "Desconocido",
+        img_perfil: userInfo?.img_perfil || null,
+        preferences,
+      };
+    }),
+  );
+
+  // --- Eventos del trayecto ---
+  const eventos = await prisma.eventoTrayecto.findMany({
+    where: { id_trayecto: id },
+    include: {
+      TipoEvento: { select: { nombre: true } },
+    },
+    orderBy: { created_at: "asc" },
+  });
+
+  // --- Comentarios ---
+  const comentarios = await prisma.comment.findMany({
+    where: { id_trayecto: id },
+    orderBy: { created_at: "desc" },
+  });
+
+  // --- ¿Usuario actual ha valorado? ---
+  const userId = req.user?.id;
+  const valorado = await hasUserRatedTrayecto(userId, trayecto.id);
+
+  const fecha = new Date(trayecto.hora).toDateString();
+  const fechaHora = new Date(trayecto.hora).toISOString();
+
+  const response = {
+    ...trayecto,
+    conductor: conductorName,
+    conductor_id: trayecto.conductor,
+    img_perfil: imgPerfil,
+    hora: fechaHora,
+    fecha,
+    valorado,
+    driverPreferences,
+    pasajeros,
+    eventos: eventos.map((e) => ({
+      id: e.id,
+      tipo_evento: e.TipoEvento?.nombre,
+      id_reserva: e.id_reserva,
+      user_id: e.user_id,
+      lat: e.lat,
+      lng: e.lng,
+      created_at: e.created_at,
+    })),
+    comentarios: comentarios.map((c) => ({
+      id_comment: c.id_comment,
+      user_id_commentator: c.user_id_commentator,
+      user_id_trayect: c.user_id_trayect,
+      opinion: c.opinion,
+      rating: c.rating,
+      created_at: c.created_at,
+    })),
+  };
+
+  return res.status(200).json(response);
+}
+
 export const TrayectosController = {
   crearTrayecto,
   obtenerTrayectos: getTrayectos,
   eliminarTrayecto,
   obtenerTrayectoPorId,
+  obtenerTrayectoCompleto,
   finalizarTrayecto,
   iniciarTrayecto,
   actualizarTrayecto,

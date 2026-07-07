@@ -66,7 +66,16 @@ function getAuthHeaders(req) {
 async function getReservaWithTrayecto(idReserva) {
   const reserva = await prisma.reserva.findUnique({
     where: { id_reserva: idReserva },
-    include: { Trayecto: { select: { conductor: true, status: true } } },
+    include: {
+      Trayecto: {
+        select: {
+          conductor: true,
+          status: true,
+          origen_lat: true,
+          origen_lng: true,
+        },
+      },
+    },
   });
   if (!reserva) return null;
   const { Trayecto, ...rest } = reserva;
@@ -74,6 +83,8 @@ async function getReservaWithTrayecto(idReserva) {
     ...rest,
     conductor: Trayecto.conductor,
     trayecto_status: Trayecto.status,
+    origen_lat: Trayecto.origen_lat,
+    origen_lng: Trayecto.origen_lng,
   };
 }
 
@@ -106,6 +117,8 @@ async function addReserva(req, res) {
       origen: true,
       conductor: true,
       destino: true,
+      origen_lat: true,
+      origen_lng: true,
     },
   });
   if (!trayecto) {
@@ -113,6 +126,8 @@ async function addReserva(req, res) {
       .status(404)
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
+
+  const isFree = Number(trayecto.precio) === 0;
 
   // Obtener el nombre del conductor desde el microservicio de usuarios
   const conductorInfo = await UsersAPI.fetchUserPublicInfo(
@@ -125,16 +140,11 @@ async function addReserva(req, res) {
   }
   const conductorName = conductorInfo.name;
 
-  // Obtener la cuenta de Stripe del conductor desde el microservicio de usuarios
-  let stripe_account = await UsersAPI.fetchUserStripeAccount(
-    String(trayecto.conductor),
-  );
-
   const cookieHeaderValue = `access_token=${token}`; // El formato debe ser 'nombre=valor'
   let reserva = {
     user_id: userId,
     trayecto_id,
-    status: "pending",
+    status: isFree ? "completed" : "pending",
   };
   let disponible = trayecto.disponible;
   console.log("Disponibilidad del trayecto:", disponible);
@@ -181,6 +191,13 @@ async function addReserva(req, res) {
       }
       reserva = existing;
       reservaId = existing.id_reserva;
+      if (isFree) {
+        await prisma.reserva.update({
+          where: { id_reserva: reservaId },
+          data: { status: "completed" },
+        });
+        reserva.status = "completed";
+      }
     } else {
       return res
         .status(500)
@@ -210,49 +227,61 @@ async function addReserva(req, res) {
       .send({ status: "Error", message: "MESSAGES_URL no configurado" });
   }
 
-  // Unirse al chat del trayecto
-  let totalAmount = trayecto.precio * 100;
-  let checkout_session;
-  try {
-    checkout_session = await fetch(
-      `${USUARIOS_URL}/api/payment/payment-intent/checkout`,
-      {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: cookieHeaderValue,
-          Authorization: `Bearer ${token}`,
+  // Crear la sesión de pago en Stripe (solo si el trayecto no es gratuito)
+  let checkout_session = null;
+  if (!isFree) {
+    let totalAmount = trayecto.precio * 100;
+    try {
+      checkout_session = await fetch(
+        `${USUARIOS_URL}/api/payment/payment-intent/checkout`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            Cookie: cookieHeaderValue,
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            amount: totalAmount,
+            recipient_user_id: String(trayecto.conductor),
+            currency: "eur",
+            description:
+              "Reserva de trayecto: " +
+              trayecto_id +
+              " desde " +
+              trayecto.origen +
+              " hasta " +
+              trayecto.destino,
+            success_url: frontend_url + "/trayecto/" + trayecto_id,
+            cancel_url: frontend_url + "/trayecto/" + trayecto_id,
+            trayecto_id,
+            id_reserva: duplicado ? reserva.id_reserva : reservaId,
+          }),
         },
-        body: JSON.stringify({
-          amount: totalAmount,
-          destination: stripe_account,
-          currency: "eur",
-          description:
-            "Reserva de trayecto: " +
-            trayecto_id +
-            " desde " +
-            trayecto.origen +
-            " hasta " +
-            trayecto.destino,
-          success_url: frontend_url + "/trayecto/" + trayecto_id,
-          cancel_url: frontend_url + "/trayecto/" + trayecto_id,
-          trayecto_id,
-          id_reserva: duplicado ? reserva.id_reserva : reservaId,
-        }),
-      },
-    ).then(async (response) => {
-      if (!response.ok) {
-        throw new Error("Error al crear el PaymentIntent en Stripe");
-      }
-      return await response.json();
-    });
-  } catch (error) {
-    return res.status(400).send({
-      status: "Error",
-      message: error.message,
-    });
+      ).then(async (response) => {
+        if (!response.ok) {
+          const errBody = await response.json().catch(() => null);
+          const err = new Error(
+            errBody?.message ?? "Error al crear el PaymentIntent en Stripe",
+          );
+          err.status = response.status;
+          err.code = errBody?.code;
+          throw err;
+        }
+        return await response.json();
+      });
+    } catch (error) {
+      const status = error.status || 400;
+      return res.status(status).send({
+        status: "Error",
+        code: error.code,
+        message: error.message,
+      });
+    }
   }
+
+  // Unirse al chat del trayecto
   try {
     const { token: authToken, headers } = getAuthHeaders(req);
     if (!authToken) {
@@ -325,13 +354,41 @@ async function addReserva(req, res) {
   }
 
   reservaId = duplicado ? reserva.id_reserva : reservaId;
-  try {
-    await prisma.reserva.update({
-      where: { id_reserva: reservaId },
-      data: { stripe_checkout_session_id: checkout_session.id },
-    });
-  } catch (e) {
-    console.error("Error guardando stripe_checkout_session_id en reserva:", e);
+  if (!isFree) {
+    try {
+      await prisma.reserva.update({
+        where: { id_reserva: reservaId },
+        data: { stripe_checkout_session_id: checkout_session.id },
+      });
+    } catch (e) {
+      console.error(
+        "Error guardando stripe_checkout_session_id en reserva:",
+        e,
+      );
+    }
+  }
+
+  if (!duplicado) {
+    try {
+      const tipoEvento = await prisma.tipoEvento.findUnique({
+        where: { nombre: "reserva_creada" },
+      });
+      if (tipoEvento) {
+        await prisma.eventoTrayecto.create({
+          data: {
+            id: randomUUID(),
+            id_trayecto: trayecto_id,
+            id_reserva: reservaId,
+            user_id: userId,
+            id_tipo_evento: tipoEvento.id,
+            lat: trayecto.origen_lat ?? 0,
+            lng: trayecto.origen_lng ?? 0,
+          },
+        });
+      }
+    } catch (e) {
+      console.error("Error creando evento de reserva_creada:", e);
+    }
   }
 
   const newReserva = {
@@ -339,13 +396,15 @@ async function addReserva(req, res) {
     user_id: userId,
     conductorName,
     trayecto_id,
-    stripe_checkout_session_id: checkout_session.id,
+    stripe_checkout_session_id: isFree ? null : checkout_session.id,
   };
   return res.status(201).send({
     status: "Success",
-    message: "Reserva creada correctamente",
+    message: isFree
+      ? "Reserva creada y confirmada correctamente (trayecto gratuito)"
+      : "Reserva creada correctamente",
     reserva: newReserva,
-    stripe_url: checkout_session.url,
+    stripe_url: isFree ? null : checkout_session.url,
   });
 }
 
@@ -611,6 +670,27 @@ async function deleteReserva(req, res) {
     });
   }
 
+  try {
+    const tipoEvento = await prisma.tipoEvento.findUnique({
+      where: { nombre: "reserva_cancelada" },
+    });
+    if (tipoEvento) {
+      await prisma.eventoTrayecto.create({
+        data: {
+          id: randomUUID(),
+          id_trayecto: reserva.id_trayecto,
+          id_reserva: idReserva,
+          user_id: req.user?.userId,
+          id_tipo_evento: tipoEvento.id,
+          lat: reserva.origen_lat ?? 0,
+          lng: reserva.origen_lng ?? 0,
+        },
+      });
+    }
+  } catch (e) {
+    console.error("Error creando evento de reserva_cancelada:", e);
+  }
+
   return res
     .status(200)
     .send({ status: "Success", message: "Reserva cancelada correctamente" });
@@ -671,6 +751,22 @@ async function confirmarViajeExitoso(req, res) {
     return res.status(409).send({
       status: "Error",
       message: "El trayecto todavía no está finalizado",
+    });
+  }
+
+  // Reserva de trayecto gratuito: no hay pago que capturar
+  if (!reserva.stripe_checkout_session_id) {
+    await prisma.reserva.update({
+      where: { id_reserva: idReserva },
+      data: {
+        trip_outcome: "success",
+        trip_outcome_reason: null,
+        trip_outcome_at: new Date(),
+      },
+    });
+    return res.status(200).send({
+      status: "Success",
+      message: "Viaje confirmado correctamente (trayecto gratuito)",
     });
   }
 
@@ -802,6 +898,233 @@ async function reclamarViaje(req, res) {
     .status(200)
     .send({ status: "Success", message: "Reclamación registrada" });
 }
+async function retomarPagoReserva(req, res) {
+  const { id_reserva, return_url } = req.body;
+  const userId = req.user.userId;
+
+  if (!id_reserva) {
+    return res
+      .status(400)
+      .send({ status: "Error", message: "id_reserva es obligatorio" });
+  }
+
+  const reserva = await prisma.reserva.findUnique({
+    where: { id_reserva: String(id_reserva) },
+    include: {
+      Trayecto: {
+        select: {
+          conductor: true,
+          precio: true,
+          origen: true,
+          destino: true,
+          status: true,
+        },
+      },
+    },
+  });
+
+  if (!reserva) {
+    return res
+      .status(404)
+      .send({ status: "Error", message: "Reserva no encontrada" });
+  }
+
+  if (reserva.user_id !== userId) {
+    return res.status(403).send({
+      status: "Error",
+      message: "No tienes permiso sobre esta reserva",
+    });
+  }
+
+  if (reserva.status !== "pending") {
+    return res.status(400).send({
+      status: "Error",
+      message: "Solo se puede retomar el pago de reservas pendientes",
+    });
+  }
+
+  const trayecto = reserva.Trayecto;
+  const isFree = Number(trayecto.precio) === 0;
+  if (isFree) {
+    return res.status(400).send({
+      status: "Error",
+      message: "Esta reserva es de un trayecto gratuito, no requiere pago",
+    });
+  }
+
+  const { token, headers } = getAuthHeaders(req);
+  if (!token) {
+    return res.status(401).send({
+      status: "Error",
+      message: "No se proporcionó un token de acceso",
+    });
+  }
+
+  const cookieHeaderValue = `access_token=${token}`;
+  let totalAmount = trayecto.precio * 100;
+
+  let checkout_session = null;
+  let usedFallback = false;
+
+  // 1) Intentar retomar la sesión de pago existente
+  try {
+    checkout_session = await fetch(
+      `${USUARIOS_URL}/api/payment/payment-intent/resume`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: cookieHeaderValue,
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          id_reserva: reserva.id_reserva,
+          return_url: return_url || undefined,
+        }),
+      },
+    ).then(async (response) => {
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        const err = new Error(
+          errBody?.message ?? "Error al retomar el pago en Stripe",
+        );
+        err.status = response.status;
+        err.code = errBody?.code;
+        throw err;
+      }
+      return await response.json();
+    });
+  } catch (resumeError) {
+    console.warn(
+      "No se pudo retomar la sesión de pago, generando una nueva:",
+      resumeError.message,
+    );
+
+    // 2) Fallback: crear una nueva sesión de checkout
+    try {
+      checkout_session = await fetch(
+        `${USUARIOS_URL}/api/payment/payment-intent/checkout`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            Cookie: cookieHeaderValue,
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            amount: totalAmount,
+            recipient_user_id: String(trayecto.conductor),
+            currency: "eur",
+            description:
+              "Reserva de trayecto: " +
+              reserva.id_trayecto +
+              " desde " +
+              trayecto.origen +
+              " hasta " +
+              trayecto.destino,
+            success_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
+            cancel_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
+            trayecto_id: reserva.id_trayecto,
+            id_reserva: reserva.id_reserva,
+          }),
+        },
+      ).then(async (response) => {
+        if (!response.ok) {
+          const errBody = await response.json().catch(() => null);
+          const err = new Error(
+            errBody?.message ?? "Error al crear el PaymentIntent en Stripe",
+          );
+          err.status = response.status;
+          err.code = errBody?.code;
+          throw err;
+        }
+        return await response.json();
+      });
+      usedFallback = true;
+    } catch (checkoutError) {
+      const status = checkoutError.status || 400;
+      return res.status(status).send({
+        status: "Error",
+        code: checkoutError.code,
+        message: checkoutError.message,
+      });
+    }
+  }
+
+  try {
+    await prisma.reserva.update({
+      where: { id_reserva: reserva.id_reserva },
+      data: { stripe_checkout_session_id: checkout_session.id },
+    });
+  } catch (e) {
+    console.error("Error guardando stripe_checkout_session_id en reserva:", e);
+  }
+
+  return res.status(200).send({
+    status: "Success",
+    message: usedFallback
+      ? "Nueva sesión de pago generada correctamente"
+      : "Pago retomado correctamente",
+    stripe_url: checkout_session.url,
+    stripe_checkout_session_id: checkout_session.id,
+  });
+}
+
+async function actualizarStatusReserva(req, res) {
+  const { id } = req.params;
+  const { status, payment_intent_id } = req.body;
+
+  const VALID_STATUSES = ["pending", "completed", "canceled"];
+
+  if (!status) {
+    return res
+      .status(400)
+      .send({ status: "Error", message: "status es obligatorio" });
+  }
+
+  if (!VALID_STATUSES.includes(status)) {
+    return res.status(400).send({
+      status: "Error",
+      message: `status no válido. Valores permitidos: ${VALID_STATUSES.join(", ")}`,
+    });
+  }
+
+  const reserva = await prisma.reserva.findUnique({
+    where: { id_reserva: String(id) },
+  });
+
+  if (!reserva) {
+    return res
+      .status(404)
+      .send({ status: "Error", message: "Reserva no encontrada" });
+  }
+
+  const data = { status };
+  if (payment_intent_id) {
+    data.stripe_payment_intent_id = payment_intent_id;
+  }
+
+  try {
+    const updated = await prisma.reserva.update({
+      where: { id_reserva: String(id) },
+      data,
+    });
+
+    return res.status(200).send({
+      status: "Success",
+      message: "Estado de la reserva actualizado correctamente",
+      reserva: updated,
+    });
+  } catch (error) {
+    return res.status(500).send({
+      status: "Error",
+      message: "Error al actualizar el estado de la reserva",
+    });
+  }
+}
+
 export const ReservaController = {
   addReserva,
   deleteReserva,
@@ -809,4 +1132,6 @@ export const ReservaController = {
   obtenerMisReservas,
   confirmarViajeExitoso,
   reclamarViaje,
+  retomarPagoReserva,
+  actualizarStatusReserva,
 };

@@ -92,6 +92,14 @@ app.get(
 );
 
 app.get(
+  "/api/trayecto/:id/completo",
+  utilsAuthentication.tryAuthenticate,
+  async (req, res) => {
+    TrayectosController.obtenerTrayectoCompleto(req, res);
+  },
+);
+
+app.get(
   "/api/trayecto/:id",
   utilsAuthentication.tryAuthenticate,
   async (req, res) => {
@@ -265,6 +273,22 @@ app.post(
   utilsAuthentication.authenticate,
   async (req, res) => {
     ReservaController.reclamarViaje(req, res);
+  },
+);
+
+app.post(
+  "/api/reserva/resume",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    ReservaController.retomarPagoReserva(req, res);
+  },
+);
+
+app.patch(
+  "/api/reserva/:id/status",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    ReservaController.actualizarStatusReserva(req, res);
   },
 );
 

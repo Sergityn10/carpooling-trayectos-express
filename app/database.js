@@ -76,22 +76,32 @@ const initDatabase = async () => {
     });
   }
 
-  // Seed tipos_eventos if empty
-  const eventoCount = await prisma.tipoEvento.count();
-  if (eventoCount === 0) {
-    await prisma.tipoEvento.createMany({
-      data: [
-        {
-          nombre: "solicitud",
-          descripcion: "El pasajero solicita ser recogido",
-        },
-        { nombre: "comienzo", descripcion: "El trayecto ha comenzado" },
-        { nombre: "finalizacion", descripcion: "El trayecto ha finalizado" },
-        {
-          nombre: "recogida",
-          descripcion: "El pasajero ha sido recogido por el conductor",
-        },
-      ],
+  // Seed/actualizar tipos_eventos
+  const tiposEventos = [
+    {
+      nombre: "solicitud",
+      descripcion: "El pasajero solicita ser recogido",
+    },
+    { nombre: "comienzo", descripcion: "El trayecto ha comenzado" },
+    { nombre: "finalizacion", descripcion: "El trayecto ha finalizado" },
+    {
+      nombre: "recogida",
+      descripcion: "El pasajero ha sido recogido por el conductor",
+    },
+    {
+      nombre: "reserva_creada",
+      descripcion: "El pasajero ha creado una reserva para el trayecto",
+    },
+    {
+      nombre: "reserva_cancelada",
+      descripcion: "El pasajero ha cancelado su reserva del trayecto",
+    },
+  ];
+  for (const tipoEvento of tiposEventos) {
+    await prisma.tipoEvento.upsert({
+      where: { nombre: tipoEvento.nombre },
+      update: {},
+      create: tipoEvento,
     });
   }
 };
