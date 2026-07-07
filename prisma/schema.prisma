@@ -22,6 +22,7 @@ model Trayecto {
   destino_lat   Float?
   destino_lng   Float?
   notified_15min Int     @default(0)
+  evento_id     String?  @db.VarChar(36)
   created_at    DateTime @default(now())
   updated_at    DateTime @default(now()) @updatedAt
 
@@ -31,6 +32,7 @@ model Trayecto {
   @@index([destino_lat, destino_lng], name: "idx_trayectos_destino")
   @@index([hora], name: "idx_trayectos_hora")
   @@index([conductor], name: "idx_trayectos_conductor")
+  @@index([evento_id], name: "idx_trayectos_evento_id")
 
   @@map("trayectos")
 }

@@ -12,6 +12,7 @@ const trayectSchema = z.object({
   conductor: z.string().min(1),
   disponible: z.number().int().min(0).max(7).optional(),
   routeIndex: z.number().int().optional(),
+  evento_id: z.string().uuid().optional(),
 });
 
 const trayectoSchemaPartial = trayectSchema.partial();

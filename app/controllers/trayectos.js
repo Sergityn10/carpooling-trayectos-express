@@ -187,6 +187,7 @@ async function crearTrayecto(req, res) {
     disponible,
     precio,
     routeIndex,
+    evento_id,
   } = validation.data;
   let conductor_id = conductor;
   console.log(
@@ -304,6 +305,7 @@ async function crearTrayecto(req, res) {
         destino_lat: destinationDetails.lat,
         destino_lng: destinationDetails.lng,
         routeIndex,
+        evento_id: evento_id ?? null,
       },
     });
     result = true;
@@ -1393,8 +1395,97 @@ async function obtenerTrayectoCompleto(req, res) {
   return res.status(200).json(response);
 }
 
+async function crearTrayectoEvento(req, res) {
+  const { evento_id } = req.body;
+  if (!evento_id) {
+    return res.status(400).send({
+      status: "Error",
+      message:
+        "evento_id es obligatorio para crear un trayecto hacia un evento",
+    });
+  }
+
+  const { headers } = getAuthHeaders(req);
+
+  const eventoInfo = await UsersAPI.fetchEventoInfo(evento_id, { headers });
+  if (!eventoInfo) {
+    return res.status(404).send({
+      status: "Error",
+      message: "No se pudo obtener la información del evento",
+    });
+  }
+
+  const destino =
+    eventoInfo.ubicacion ||
+    eventoInfo.direccion ||
+    eventoInfo.location ||
+    eventoInfo.address;
+  if (!destino) {
+    return res.status(400).send({
+      status: "Error",
+      message: "El evento no tiene una ubicación válida",
+    });
+  }
+
+  req.body.destino = destino;
+  req.body.evento_id = evento_id;
+
+  return crearTrayecto(req, res);
+}
+
+async function obtenerTrayectosPorEvento(req, res) {
+  const { eventoId } = req.params;
+  if (!eventoId) {
+    return res.status(400).send({
+      status: "Error",
+      message: "eventoId es obligatorio",
+    });
+  }
+
+  try {
+    const rows = await prisma.trayecto.findMany({
+      where: { evento_id: eventoId, NOT: { status: "cancelado" } },
+      orderBy: { hora: "asc" },
+    });
+
+    const conductorIds = [...new Set(rows.map((t) => String(t.conductor)))];
+    const usersList = await UsersAPI.fetchUsersByIds(conductorIds);
+    const usersMap = new Map(usersList.map((u) => [u.id, u]));
+
+    const userId = req.user?.id;
+    const ratedIds = await getRatedTrayectoIdsForUser(
+      userId,
+      rows.map((t) => t.id),
+    );
+
+    const data = rows.map((t) => {
+      const conductorInfo = usersMap.get(String(t.conductor));
+      return {
+        ...t,
+        conductor: conductorInfo?.name || "Desconocido",
+        conductor_id: t.conductor,
+        img_perfil: conductorInfo?.img_perfil || null,
+        valorado: ratedIds.has(String(t.id)),
+      };
+    });
+
+    return res.status(200).json({
+      status: "Success",
+      evento_id: eventoId,
+      trayectos: data,
+    });
+  } catch (error) {
+    console.error("Error en obtenerTrayectosPorEvento:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error obteniendo trayectos por evento",
+    });
+  }
+}
+
 export const TrayectosController = {
   crearTrayecto,
+  crearTrayectoEvento,
   obtenerTrayectos: getTrayectos,
   eliminarTrayecto,
   obtenerTrayectoPorId,
@@ -1405,6 +1496,7 @@ export const TrayectosController = {
   patchTrayecto,
   buscarTrayectos,
   obtenerTrayectosPorConductor,
+  obtenerTrayectosPorEvento,
   obtenerMisTrayectos,
   obtenerProximosTrayectos,
   updateLatLong,
