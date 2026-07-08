@@ -257,38 +257,53 @@ async function crearTrayecto(req, res) {
     });
   }
 
-  try {
+  if (precio === 0) {
     console.log(
-      "[crearTrayecto] Consultando precio gasoil para provincia:",
-      provinceForPricing,
+      "[crearTrayecto] Precio establecido a 0 por el conductor, saltando cálculo de gasoil",
     );
-    const gasoilPrice =
-      await OilPriceProvider.getGasoilAveragePriceByProvinciaNombre(
+  } else {
+    try {
+      console.log(
+        "[crearTrayecto] Consultando precio gasoil para provincia:",
         provinceForPricing,
       );
-    precio = Math.ceil(gasoilPrice);
-    console.log(
-      "[crearTrayecto] Precio gasoil obtenido:",
-      gasoilPrice,
-      "-> precio final:",
-      precio,
-    );
-  } catch (error) {
-    console.error(
-      "[crearTrayecto] Error al calcular el precio por provincia:",
-      error,
-    );
-    return res.status(502).send({
-      status: "Error",
-      message: "No se pudo calcular el precio del gasoil para el trayecto",
-    });
+      const gasoilPrice =
+        await OilPriceProvider.getGasoilAveragePriceByProvinciaNombre(
+          provinceForPricing,
+        );
+      precio = Math.ceil(gasoilPrice);
+      console.log(
+        "[crearTrayecto] Precio gasoil obtenido:",
+        gasoilPrice,
+        "-> precio final:",
+        precio,
+      );
+    } catch (error) {
+      console.error(
+        "[crearTrayecto] Error al calcular el precio por provincia:",
+        error,
+      );
+      return res.status(502).send({
+        status: "Error",
+        message: "No se pudo calcular el precio del gasoil para el trayecto",
+      });
+    }
   }
 
   const trayectoId = randomUUID();
+  const fechaHoraDate = new Date(fechaHoraSQL);
+  const nowForCheck = new Date();
+  const diffMs = Math.abs(fechaHoraDate.getTime() - nowForCheck.getTime());
+  const TWO_MINUTES = 2 * 60 * 1000;
+  const iniciarInmediato = diffMs <= TWO_MINUTES;
+  const estadoInicial = iniciarInmediato ? "en curso" : "programado";
+
   try {
     console.log(
       "[crearTrayecto] Insertando trayecto en BD con UUID:",
       trayectoId,
+      "| estado inicial:",
+      estadoInicial,
     );
     await prisma.trayecto.create({
       data: {
@@ -300,6 +315,7 @@ async function crearTrayecto(req, res) {
         conductor,
         disponible,
         precio,
+        status: estadoInicial,
         origen_lat: originDetails.lat,
         origen_lng: originDetails.lng,
         destino_lat: destinationDetails.lat,
@@ -436,6 +452,50 @@ async function crearTrayecto(req, res) {
     "Precio:",
     precio,
   );
+
+  if (iniciarInmediato) {
+    try {
+      const tipoEvento = await prisma.tipoEvento.findUnique({
+        where: { nombre: "comienzo" },
+      });
+      if (tipoEvento) {
+        await prisma.eventoTrayecto.create({
+          data: {
+            id: randomUUID(),
+            id_trayecto: insertedId,
+            user_id: conductor,
+            id_tipo_evento: tipoEvento.id,
+            lat: originDetails.lat ?? 0,
+            lng: originDetails.lng ?? 0,
+          },
+        });
+        console.log(
+          "[crearTrayecto] Evento de comienzo generado automáticamente",
+        );
+      }
+    } catch (e) {
+      console.error(
+        "[crearTrayecto] Error al generar evento de comienzo automático:",
+        e,
+      );
+    }
+
+    try {
+      await notifyTrayectoEnCurso({
+        id: insertedId,
+        origen,
+        destino,
+        conductor,
+        hora: new Date(fechaHoraSQL),
+      });
+    } catch (e) {
+      console.error(
+        "[crearTrayecto] Error notificando trayecto en curso automático:",
+        e,
+      );
+    }
+  }
+
   return res.status(201).send({
     status: "Success",
     message: "Trayecto creado correctamente",
@@ -686,9 +746,25 @@ async function obtenerProximosTrayectos(req, res) {
 
   const rows = await prisma.trayecto.findMany({
     where: {
-      OR: [{ conductor: id }, { Reservas: { some: { user_id: id } } }],
-      hora: { gte: now, lte: twoDaysLater },
-      status: { notIn: ["finalizado", "cancelado"] },
+      AND: [
+        {
+          OR: [
+            { conductor: id },
+            {
+              Reservas: {
+                some: { user_id: id, status: { notIn: ["canceled"] } },
+              },
+            },
+          ],
+        },
+        {
+          OR: [
+            { status: "en curso" },
+            { hora: { gte: now, lte: twoDaysLater } },
+          ],
+        },
+        { status: { notIn: ["finalizado", "cancelado"] } },
+      ],
     },
     orderBy: { hora: "asc" },
   });
@@ -1483,6 +1559,153 @@ async function obtenerTrayectosPorEvento(req, res) {
   }
 }
 
+async function obtenerEstadoTrayectoPasajero(req, res) {
+  const { id: trayectoId } = req.params;
+  if (!trayectoId || trayectoId === "undefined") {
+    return res
+      .status(400)
+      .send({ status: "Error", message: "id de trayecto inválido" });
+  }
+
+  const userId = req.user?.userId;
+  if (!userId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
+  const trayecto = await prisma.trayecto.findUnique({
+    where: { id: trayectoId },
+    select: {
+      id: true,
+      origen: true,
+      destino: true,
+      hora: true,
+      conductor: true,
+      status: true,
+      origen_lat: true,
+      origen_lng: true,
+      destino_lat: true,
+      destino_lng: true,
+    },
+  });
+
+  if (!trayecto) {
+    return res
+      .status(404)
+      .send({ status: "Error", message: "Trayecto no encontrado" });
+  }
+
+  const reserva = await prisma.reserva.findFirst({
+    where: {
+      id_trayecto: trayectoId,
+      user_id: userId,
+      NOT: { status: "canceled" },
+    },
+    select: { id_reserva: true, status: true, trip_outcome: true },
+  });
+
+  if (!reserva) {
+    return res.status(403).send({
+      status: "Error",
+      message: "No tienes una reserva activa en este trayecto",
+    });
+  }
+
+  const eventos = await prisma.eventoTrayecto.findMany({
+    where: { id_trayecto: trayectoId },
+    orderBy: { created_at: "asc" },
+    include: {
+      TipoEvento: { select: { id: true, nombre: true } },
+    },
+  });
+
+  const nombresEventos = new Set(eventos.map((e) => e.TipoEvento?.nombre));
+
+  const eventoRecogida = eventos.find(
+    (e) =>
+      e.TipoEvento?.nombre === "recogida" &&
+      e.id_reserva === reserva.id_reserva,
+  );
+
+  const eventoLlegada = eventos.find(
+    (e) =>
+      e.TipoEvento?.nombre === "llegada_destino" &&
+      e.id_reserva === reserva.id_reserva,
+  );
+
+  const conductorInfo = await UsersAPI.fetchUserPublicInfo(
+    String(trayecto.conductor),
+  );
+
+  const estadoTrayecto = String(trayecto.status ?? "").toLowerCase();
+  let faseTrayecto = "pendiente";
+  if (estadoTrayecto === "en curso") faseTrayecto = "en_curso";
+  else if (estadoTrayecto === "finalizado") faseTrayecto = "finalizado";
+  else if (estadoTrayecto === "cancelado") faseTrayecto = "cancelado";
+
+  let fasePasajero = "esperando_recogida";
+  if (eventoLlegada) fasePasajero = "en_destino";
+  else if (eventoRecogida) fasePasajero = "en_ruta";
+
+  return res.status(200).json({
+    status: "Success",
+    trayecto: {
+      id: trayecto.id,
+      origen: trayecto.origen,
+      destino: trayecto.destino,
+      hora: trayecto.hora,
+      status: trayecto.status,
+      fase: faseTrayecto,
+      conductor: conductorInfo?.name || "Desconocido",
+      conductor_id: trayecto.conductor,
+      img_perfil: conductorInfo?.img_perfil || null,
+    },
+    reserva: {
+      id_reserva: reserva.id_reserva,
+      status: reserva.status,
+      trip_outcome: reserva.trip_outcome,
+    },
+    pasajero: {
+      recogido: !!eventoRecogida,
+      en_destino: !!eventoLlegada,
+      fase: fasePasajero,
+      evento_recogida: eventoRecogida
+        ? {
+            id: eventoRecogida.id,
+            lat: eventoRecogida.lat,
+            lng: eventoRecogida.lng,
+            created_at: eventoRecogida.created_at,
+          }
+        : null,
+      evento_llegada: eventoLlegada
+        ? {
+            id: eventoLlegada.id,
+            lat: eventoLlegada.lat,
+            lng: eventoLlegada.lng,
+            created_at: eventoLlegada.created_at,
+          }
+        : null,
+    },
+    eventos_trayecto: {
+      iniciado: nombresEventos.has("comienzo"),
+      finalizado: nombresEventos.has("finalizacion"),
+      hay_recogidas: eventos.some((e) => e.TipoEvento?.nombre === "recogida"),
+      hay_llegadas: eventos.some(
+        (e) => e.TipoEvento?.nombre === "llegada_destino",
+      ),
+    },
+    eventos: eventos.map((e) => ({
+      id: e.id,
+      id_trayecto: e.id_trayecto,
+      id_reserva: e.id_reserva,
+      user_id: e.user_id,
+      tipo_evento: e.TipoEvento,
+      lat: e.lat,
+      lng: e.lng,
+      created_at: e.created_at,
+    })),
+  });
+}
+
 export const TrayectosController = {
   crearTrayecto,
   crearTrayectoEvento,
@@ -1490,6 +1713,7 @@ export const TrayectosController = {
   eliminarTrayecto,
   obtenerTrayectoPorId,
   obtenerTrayectoCompleto,
+  obtenerEstadoTrayectoPasajero,
   finalizarTrayecto,
   iniciarTrayecto,
   actualizarTrayecto,

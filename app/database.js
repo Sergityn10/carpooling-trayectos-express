@@ -96,6 +96,10 @@ const initDatabase = async () => {
       nombre: "reserva_cancelada",
       descripcion: "El pasajero ha cancelado su reserva del trayecto",
     },
+    {
+      nombre: "llegada_destino",
+      descripcion: "El pasajero ha llegado a su destino",
+    },
   ];
   for (const tipoEvento of tiposEventos) {
     await prisma.tipoEvento.upsert({

@@ -100,6 +100,14 @@ app.get(
 );
 
 app.get(
+  "/api/trayecto/:id/estado",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    TrayectosController.obtenerEstadoTrayectoPasajero(req, res);
+  },
+);
+
+app.get(
   "/api/trayecto/:id",
   utilsAuthentication.tryAuthenticate,
   async (req, res) => {
@@ -206,6 +214,15 @@ app.delete(
     RecogidasController.eliminarRecogida(req, res);
   },
 );
+
+app.post(
+  "/api/trayecto/:id/llegada",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    RecogidasController.registrarLlegadaDestino(req, res);
+  },
+);
+
 app.get(
   "/api/trayecto/conductor/:id",
   utilsAuthentication.tryAuthenticate,
@@ -252,6 +269,14 @@ app.post("/api/reserva", utilsAuthentication.authenticate, async (req, res) => {
   // Llama a la función addReserva del controlador de reservas
   ReservaController.addReserva(req, res);
 });
+
+app.post(
+  "/api/reserva/qr",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    ReservaController.reservaQR(req, res);
+  },
+);
 
 app.get(
   "/api/reserva/userId/:userIdParam",

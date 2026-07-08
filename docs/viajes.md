@@ -739,9 +739,9 @@ GET /api/trayecto/evento/:eventoId
 
 **Path params:**
 
-| Parámetro   | Tipo          | Descripción      |
-| ----------- | ------------- | ---------------- |
-| `eventoId`  | string (UUID) | ID del evento    |
+| Parámetro  | Tipo          | Descripción   |
+| ---------- | ------------- | ------------- |
+| `eventoId` | string (UUID) | ID del evento |
 
 **Respuesta 200:**
 
@@ -772,6 +772,345 @@ GET /api/trayecto/evento/:eventoId
 
 - `400` — `eventoId` faltante.
 - `500` — Error en el servidor.
+
+---
+
+## Estado de un trayecto (perspectiva del pasajero)
+
+### Obtener estado del trayecto del pasajero
+
+```
+GET /api/trayecto/:id/estado
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Devuelve el estado completo de un trayecto desde la perspectiva del pasajero autenticado. Incluye el estado general del trayecto, el estado de la reserva del pasajero, y si el pasajero ha sido recogido y/o ha llegado a destino. **Requiere que el usuario tenga una reserva activa (no cancelada)** en el trayecto.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "trayecto": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "origen": "Madrid",
+    "destino": "Toledo",
+    "hora": "2025-01-15T10:00:00.000Z",
+    "status": "en curso",
+    "fase": "en_curso",
+    "conductor": "Juan Pérez",
+    "conductor_id": "b2c3d4e5-f678-90ab-cdef-123456789012",
+    "img_perfil": "https://..."
+  },
+  "reserva": {
+    "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "status": "completed",
+    "trip_outcome": "pending"
+  },
+  "pasajero": {
+    "recogido": true,
+    "en_destino": false,
+    "fase": "en_ruta",
+    "evento_recogida": {
+      "id": "e1f2a3b4-c5d6-7890-abcd-ef1234567890",
+      "lat": 40.4168,
+      "lng": -3.7038,
+      "created_at": "2025-01-15T10:05:00.000Z"
+    },
+    "evento_llegada": null
+  },
+  "eventos_trayecto": {
+    "iniciado": true,
+    "finalizado": false,
+    "hay_recogidas": true,
+    "hay_llegadas": false
+  },
+  "eventos": [
+    {
+      "id": "e0f1a2b3-c4d5-7890-abcd-ef1234567890",
+      "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
+      "id_reserva": null,
+      "user_id": "b2c3d4e5-f678-90ab-cdef-123456789012",
+      "tipo_evento": { "id": 2, "nombre": "comienzo" },
+      "lat": 40.4168,
+      "lng": -3.7038,
+      "created_at": "2025-01-15T10:00:00.000Z"
+    },
+    {
+      "id": "e1f2a3b4-c5d6-7890-abcd-ef1234567890",
+      "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
+      "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "tipo_evento": { "id": 4, "nombre": "recogida" },
+      "lat": 40.4168,
+      "lng": -3.7038,
+      "created_at": "2025-01-15T10:05:00.000Z"
+    }
+  ]
+}
+```
+
+**Campos de la respuesta:**
+
+| Campo                         | Descripción                                                                  |
+| ----------------------------- | ---------------------------------------------------------------------------- |
+| `trayecto.fase`               | Fase del trayecto: `pendiente`, `en_curso`, `finalizado`, `cancelado`        |
+| `pasajero.recogido`           | `true` si existe un evento de `recogida` para la reserva del pasajero        |
+| `pasajero.en_destino`         | `true` si existe un evento de `llegada_destino` para la reserva del pasajero |
+| `pasajero.fase`               | Fase del pasajero: `esperando_recogida`, `en_ruta`, `en_destino`             |
+| `pasajero.evento_recogida`    | Datos del evento de recogida (lat, lng, created_at) o `null`                 |
+| `pasajero.evento_llegada`     | Datos del evento de llegada (lat, lng, created_at) o `null`                  |
+| `eventos_trayecto.iniciado`   | `true` si existe un evento de `comienzo` en el trayecto                      |
+| `eventos_trayecto.finalizado` | `true` si existe un evento de `finalizacion` en el trayecto                  |
+| `eventos`                     | Lista completa de eventos del trayecto ordenados cronológicamente            |
+
+**Errores:**
+
+- `400` — ID de trayecto inválido.
+- `401` — No autenticado.
+- `403` — No tienes una reserva activa en este trayecto.
+- `404` — Trayecto no encontrado.
+
+---
+
+## Eventos de trayecto (Recogidas)
+
+Gestión de eventos del ciclo de vida de un trayecto: solicitud, comienzo, finalización, recogida, reserva_creada, reserva_cancelada y llegada_destino.
+
+### 1. Crear evento de trayecto
+
+```
+POST /api/trayecto/:id/recoger
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Registra un evento de trayecto (recogida, comienzo, finalización, solicitud, etc.). El trayecto debe estar en estado `en curso`. Si el usuario no es el conductor, debe tener una reserva activa. Para eventos de tipo `recogida`, el `id_reserva` es obligatorio.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+
+**Body (JSON):**
+
+```json
+{
+  "lat": 40.4168,
+  "lng": -3.7038,
+  "tipo_evento": "recogida",
+  "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+| Campo         | Tipo          | Requerido   | Validación                                                                   |
+| ------------- | ------------- | ----------- | ---------------------------------------------------------------------------- |
+| `lat`         | number        | Sí          | Entre -90 y 90                                                               |
+| `lng`         | number        | Sí          | Entre -180 y 180                                                             |
+| `tipo_evento` | string        | Sí          | Enum: `solicitud`, `comienzo`, `finalizacion`, `recogida`, `llegada_destino` |
+| `id_reserva`  | string (UUID) | Condicional | Requerido si `tipo_evento` es `recogida`                                     |
+
+**Respuesta 201:**
+
+```json
+{
+  "status": "Success",
+  "message": "Evento de trayecto guardado correctamente",
+  "evento": {
+    "id": "e1f2a3b4-c5d6-7890-abcd-ef1234567890",
+    "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
+    "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "id_tipo_evento": 4,
+    "tipo_evento": { "id": 4, "nombre": "recogida" },
+    "lat": 40.4168,
+    "lng": -3.7038,
+    "created_at": "2025-01-15T10:05:00.000Z"
+  }
+}
+```
+
+**Errores:**
+
+- `400` — ID inválido, validación fallida, o `id_reserva` faltante para evento `recogida`.
+- `401` — No autenticado.
+- `403` — No formas parte de este trayecto.
+- `404` — Trayecto o tipo de evento no encontrado.
+- `409` — El trayecto no está en curso.
+
+---
+
+### 2. Obtener eventos de un trayecto
+
+```
+GET /api/trayecto/:id/recoger
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Devuelve todos los eventos de un trayecto ordenados cronológicamente. El conductor o cualquier pasajero con reserva activa pueden consultar. Los administradores tienen acceso sin restricciones.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "eventos": [
+    {
+      "id": "e1f2a3b4-c5d6-7890-abcd-ef1234567890",
+      "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
+      "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "id_tipo_evento": 4,
+      "tipo_evento": { "id": 4, "nombre": "recogida" },
+      "lat": 40.4168,
+      "lng": -3.7038,
+      "created_at": "2025-01-15T10:05:00.000Z"
+    }
+  ]
+}
+```
+
+**Errores:**
+
+- `400` — ID inválido.
+- `401` — No autenticado.
+- `403` — No formas parte de este trayecto.
+- `404` — Trayecto no encontrado.
+
+---
+
+### 3. Obtener eventos de un usuario en un trayecto
+
+```
+GET /api/trayecto/:id/recoger/:idUser
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Devuelve los eventos de un usuario específico dentro de un trayecto. El conductor puede ver los eventos de cualquier pasajero. Un pasajero solo puede ver sus propios eventos.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+| `idUser`  | string (UUID) | ID del usuario  |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "eventos": [ ... ]
+}
+```
+
+**Errores:**
+
+- `400` — ID de trayecto o usuario inválido.
+- `401` — No autenticado o sin permiso.
+- `404` — Trayecto no encontrado.
+
+---
+
+### 4. Eliminar eventos de un usuario en un trayecto
+
+```
+DELETE /api/trayecto/:id/recoger/:idUser
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Elimina todos los eventos de un usuario específico dentro de un trayecto. Solo el conductor del trayecto puede eliminar eventos de pasajeros.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+| `idUser`  | string (UUID) | ID del usuario  |
+
+**Respuesta 204:** Sin contenido.
+
+**Errores:**
+
+- `400` — ID inválido.
+- `401` — No tienes permiso para eliminar estos eventos.
+- `404` — No se encontraron eventos para eliminar.
+
+---
+
+### 5. Registrar llegada a destino
+
+```
+POST /api/trayecto/:id/llegada
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Registra que un pasajero ha llegado a su destino. Solo los pasajeros (no el conductor) pueden usar este endpoint. **Debe existir un evento de `recogida` previo** para la reserva del pasajero; de lo contrario se devuelve error 409. No se puede registrar la llegada dos veces para la misma reserva.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+
+**Body (JSON):**
+
+```json
+{
+  "lat": 39.8628,
+  "lng": -4.0273
+}
+```
+
+| Campo | Tipo   | Requerido | Descripción                         |
+| ----- | ------ | --------- | ----------------------------------- |
+| `lat` | number | Sí        | Latitud de la ubicación de llegada  |
+| `lng` | number | Sí        | Longitud de la ubicación de llegada |
+
+**Respuesta 201:**
+
+```json
+{
+  "status": "Success",
+  "message": "Llegada a destino registrada correctamente",
+  "evento": {
+    "id": "e2f3a4b5-c6d7-7890-abcd-ef1234567890",
+    "id_trayecto": "550e8400-e29b-41d4-a716-446655440000",
+    "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "tipo_evento": { "id": 7, "nombre": "llegada_destino" },
+    "lat": 39.8628,
+    "lng": -4.0273,
+    "created_at": "2025-01-15T11:30:00.000Z"
+  }
+}
+```
+
+**Errores:**
+
+- `400` — ID inválido, o `lat`/`lng` ausentes.
+- `401` — No autenticado.
+- `403` — El conductor no puede registrar llegada a destino, o no tienes reserva activa.
+- `404` — Trayecto no encontrado.
+- `409` — El pasajero no ha sido recogido previamente, o ya se registró la llegada.
 
 ---
 

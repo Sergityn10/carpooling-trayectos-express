@@ -1075,7 +1075,7 @@ async function retomarPagoReserva(req, res) {
 async function actualizarStatusReserva(req, res) {
   const { id } = req.params;
   const { status, payment_intent_id } = req.body;
-
+  console.log()
   const VALID_STATUSES = ["pending", "completed", "canceled"];
 
   if (!status) {
@@ -1125,6 +1125,155 @@ async function actualizarStatusReserva(req, res) {
   }
 }
 
+async function reservaQR(req, res) {
+  const { trayecto_id, lat, lng } = req.body;
+  const userId = req.user?.userId;
+
+  if (!userId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
+  if (!trayecto_id) {
+    return res
+      .status(400)
+      .send({ status: "Error", message: "trayecto_id es obligatorio" });
+  }
+
+  if (lat == null || lng == null) {
+    return res
+      .status(400)
+      .send({ status: "Error", message: "lat y lng son obligatorios" });
+  }
+
+  const trayecto = await prisma.trayecto.findUnique({
+    where: { id: trayecto_id },
+    select: {
+      id: true,
+      conductor: true,
+      disponible: true,
+      precio: true,
+      status: true,
+      origen_lat: true,
+      origen_lng: true,
+    },
+  });
+
+  if (!trayecto) {
+    return res
+      .status(404)
+      .send({ status: "Error", message: "Trayecto no encontrado" });
+  }
+
+  if (String(trayecto.conductor) === String(userId)) {
+    return res
+      .status(400)
+      .send({
+        status: "Error",
+        message: "El conductor no puede reservar su propio trayecto",
+      });
+  }
+
+  if (trayecto.disponible <= 0) {
+    return res
+      .status(400)
+      .send({
+        status: "Error",
+        message: "El trayecto no tiene asientos libres",
+      });
+  }
+
+  const existing = await prisma.reserva.findUnique({
+    where: {
+      user_id_id_trayecto: { user_id: userId, id_trayecto: trayecto_id },
+    },
+  });
+
+  let reservaId;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      if (existing) {
+        if (existing.status === "canceled") {
+          reservaId = existing.id_reserva;
+          await tx.reserva.update({
+            where: { id_reserva: reservaId },
+            data: { status: "completed" },
+          });
+        } else {
+          reservaId = existing.id_reserva;
+        }
+      } else {
+        reservaId = randomUUID();
+        await tx.reserva.create({
+          data: {
+            id_reserva: reservaId,
+            user_id: userId,
+            id_trayecto: trayecto_id,
+            status: "completed",
+          },
+        });
+      }
+
+      await tx.trayecto.update({
+        where: { id: trayecto_id },
+        data: { disponible: { decrement: 1 } },
+      });
+
+      const tipoEventoRecogida = await tx.tipoEvento.findUnique({
+        where: { nombre: "recogida" },
+      });
+
+      if (tipoEventoRecogida) {
+        await tx.eventoTrayecto.create({
+          data: {
+            id: randomUUID(),
+            id_trayecto: trayecto_id,
+            id_reserva: reservaId,
+            user_id: userId,
+            id_tipo_evento: tipoEventoRecogida.id,
+            lat: Number(lat),
+            lng: Number(lng),
+          },
+        });
+      }
+
+      const tipoEventoReserva = await tx.tipoEvento.findUnique({
+        where: { nombre: "reserva_creada" },
+      });
+
+      if (tipoEventoReserva) {
+        await tx.eventoTrayecto.create({
+          data: {
+            id: randomUUID(),
+            id_trayecto: trayecto_id,
+            id_reserva: reservaId,
+            user_id: userId,
+            id_tipo_evento: tipoEventoReserva.id,
+            lat: trayecto.origen_lat ?? Number(lat),
+            lng: trayecto.origen_lng ?? Number(lng),
+          },
+        });
+      }
+    });
+  } catch (error) {
+    console.error("Error en reservaQR:", error);
+    return res
+      .status(500)
+      .send({ status: "Error", message: "Error al procesar la reserva QR" });
+  }
+
+  return res.status(201).send({
+    status: "Success",
+    message: "Reserva creada y recogida registrada correctamente",
+    reserva: {
+      id: reservaId,
+      user_id: userId,
+      trayecto_id,
+      status: "completed",
+    },
+  });
+}
+
 export const ReservaController = {
   addReserva,
   deleteReserva,
@@ -1134,4 +1283,5 @@ export const ReservaController = {
   reclamarViaje,
   retomarPagoReserva,
   actualizarStatusReserva,
+  reservaQR,
 };
