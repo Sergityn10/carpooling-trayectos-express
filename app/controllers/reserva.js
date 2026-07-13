@@ -1075,7 +1075,7 @@ async function retomarPagoReserva(req, res) {
 async function actualizarStatusReserva(req, res) {
   const { id } = req.params;
   const { status, payment_intent_id } = req.body;
-  console.log()
+  console.log();
   const VALID_STATUSES = ["pending", "completed", "canceled"];
 
   if (!status) {
@@ -1153,6 +1153,8 @@ async function reservaQR(req, res) {
       disponible: true,
       precio: true,
       status: true,
+      origen: true,
+      destino: true,
       origen_lat: true,
       origen_lng: true,
     },
@@ -1165,21 +1167,17 @@ async function reservaQR(req, res) {
   }
 
   if (String(trayecto.conductor) === String(userId)) {
-    return res
-      .status(400)
-      .send({
-        status: "Error",
-        message: "El conductor no puede reservar su propio trayecto",
-      });
+    return res.status(400).send({
+      status: "Error",
+      message: "El conductor no puede reservar su propio trayecto",
+    });
   }
 
   if (trayecto.disponible <= 0) {
-    return res
-      .status(400)
-      .send({
-        status: "Error",
-        message: "El trayecto no tiene asientos libres",
-      });
+    return res.status(400).send({
+      status: "Error",
+      message: "El trayecto no tiene asientos libres",
+    });
   }
 
   const existing = await prisma.reserva.findUnique({
@@ -1188,6 +1186,137 @@ async function reservaQR(req, res) {
     },
   });
 
+  const isFree = Number(trayecto.precio) === 0;
+  const { token, headers } = getAuthHeaders(req);
+  const cookieHeaderValue = `access_token=${token}`;
+
+  let checkoutSession = null;
+  let paymentConfirmed = false;
+  let stripePaymentIntentId = null;
+  let stripeCheckoutSessionId = null;
+
+  if (!isFree) {
+    if (!token) {
+      return res
+        .status(401)
+        .send({
+          status: "Error",
+          message: "No se proporcionó token de acceso",
+        });
+    }
+
+    const totalAmount = Math.round(Number(trayecto.precio) * 100);
+
+    try {
+      checkoutSession = await fetch(
+        `${USUARIOS_URL}/api/payment/payment-intent/checkout`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            Cookie: cookieHeaderValue,
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            amount: totalAmount,
+            recipient_user_id: String(trayecto.conductor),
+            currency: "eur",
+            description:
+              "Reserva QR: " +
+              trayecto_id +
+              " desde " +
+              trayecto.origen +
+              " hasta " +
+              trayecto.destino,
+            success_url: frontend_url + "/trayecto/" + trayecto_id,
+            cancel_url: frontend_url + "/trayecto/" + trayecto_id,
+            trayecto_id,
+            id_reserva: existing?.id_reserva || undefined,
+          }),
+        },
+      ).then(async (response) => {
+        if (!response.ok) {
+          const errBody = await response.json().catch(() => null);
+          const err = new Error(
+            errBody?.message ?? "Error al crear el PaymentIntent en Stripe",
+          );
+          err.status = response.status;
+          err.code = errBody?.code;
+          throw err;
+        }
+        return await response.json();
+      });
+
+      stripeCheckoutSessionId = checkoutSession.id;
+      const paymentIntentId = checkoutSession.payment_intent;
+
+      if (paymentIntentId) {
+        try {
+          const customerRes = await fetch(
+            `${USUARIOS_URL}/api/payment/stripe-customer`,
+            {
+              method: "GET",
+              credentials: "include",
+              headers: {
+                "Content-Type": "application/json",
+                Cookie: cookieHeaderValue,
+                Authorization: `Bearer ${token}`,
+              },
+            },
+          );
+
+          if (customerRes.ok) {
+            const customerBody = await customerRes.json();
+            const customerId = customerBody?.customer?.id;
+
+            if (customerId) {
+              const paymentMethods = await stripe.paymentMethods.list({
+                customer: customerId,
+                type: "card",
+              });
+
+              if (paymentMethods.data.length > 0) {
+                const pi = await stripe.paymentIntents.confirm(
+                  paymentIntentId,
+                  {
+                    payment_method: paymentMethods.data[0].id,
+                    off_session: true,
+                  },
+                );
+
+                if (pi.status === "requires_capture") {
+                  const captured =
+                    await stripe.paymentIntents.capture(paymentIntentId);
+                  if (captured.status === "succeeded") {
+                    paymentConfirmed = true;
+                    stripePaymentIntentId = paymentIntentId;
+                  }
+                } else if (pi.status === "succeeded") {
+                  paymentConfirmed = true;
+                  stripePaymentIntentId = paymentIntentId;
+                }
+              }
+            }
+          }
+        } catch (confirmError) {
+          console.error(
+            "Error confirmando PaymentIntent directamente:",
+            confirmError.message,
+          );
+        }
+      }
+    } catch (error) {
+      const status = error.status || 400;
+      return res.status(status).send({
+        status: "Error",
+        code: error.code,
+        message: error.message,
+      });
+    }
+  }
+
+  const reservaStatus = isFree || paymentConfirmed ? "completed" : "pending";
   let reservaId;
 
   try {
@@ -1197,7 +1326,15 @@ async function reservaQR(req, res) {
           reservaId = existing.id_reserva;
           await tx.reserva.update({
             where: { id_reserva: reservaId },
-            data: { status: "completed" },
+            data: {
+              status: reservaStatus,
+              ...(stripeCheckoutSessionId && {
+                stripe_checkout_session_id: stripeCheckoutSessionId,
+              }),
+              ...(stripePaymentIntentId && {
+                stripe_payment_intent_id: stripePaymentIntentId,
+              }),
+            },
           });
         } else {
           reservaId = existing.id_reserva;
@@ -1209,7 +1346,13 @@ async function reservaQR(req, res) {
             id_reserva: reservaId,
             user_id: userId,
             id_trayecto: trayecto_id,
-            status: "completed",
+            status: reservaStatus,
+            ...(stripeCheckoutSessionId && {
+              stripe_checkout_session_id: stripeCheckoutSessionId,
+            }),
+            ...(stripePaymentIntentId && {
+              stripe_payment_intent_id: stripePaymentIntentId,
+            }),
           },
         });
       }
@@ -1218,24 +1361,6 @@ async function reservaQR(req, res) {
         where: { id: trayecto_id },
         data: { disponible: { decrement: 1 } },
       });
-
-      const tipoEventoRecogida = await tx.tipoEvento.findUnique({
-        where: { nombre: "recogida" },
-      });
-
-      if (tipoEventoRecogida) {
-        await tx.eventoTrayecto.create({
-          data: {
-            id: randomUUID(),
-            id_trayecto: trayecto_id,
-            id_reserva: reservaId,
-            user_id: userId,
-            id_tipo_evento: tipoEventoRecogida.id,
-            lat: Number(lat),
-            lng: Number(lng),
-          },
-        });
-      }
 
       const tipoEventoReserva = await tx.tipoEvento.findUnique({
         where: { nombre: "reserva_creada" },
@@ -1254,12 +1379,49 @@ async function reservaQR(req, res) {
           },
         });
       }
+
+      if (isFree || paymentConfirmed) {
+        const tipoEventoRecogida = await tx.tipoEvento.findUnique({
+          where: { nombre: "recogida" },
+        });
+
+        if (tipoEventoRecogida) {
+          await tx.eventoTrayecto.create({
+            data: {
+              id: randomUUID(),
+              id_trayecto: trayecto_id,
+              id_reserva: reservaId,
+              user_id: userId,
+              id_tipo_evento: tipoEventoRecogida.id,
+              lat: Number(lat),
+              lng: Number(lng),
+            },
+          });
+        }
+      }
     });
   } catch (error) {
     console.error("Error en reservaQR:", error);
     return res
       .status(500)
       .send({ status: "Error", message: "Error al procesar la reserva QR" });
+  }
+
+  if (!isFree && !paymentConfirmed && checkoutSession?.url) {
+    return res.status(201).send({
+      status: "Success",
+      message:
+        "Reserva creada en estado pendiente. Se requiere completar el pago.",
+      requires_payment: true,
+      stripe_url: checkoutSession.url,
+      stripe_checkout_session_id: stripeCheckoutSessionId,
+      reserva: {
+        id: reservaId,
+        user_id: userId,
+        trayecto_id,
+        status: "pending",
+      },
+    });
   }
 
   return res.status(201).send({

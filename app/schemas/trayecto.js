@@ -13,6 +13,10 @@ const trayectSchema = z.object({
   disponible: z.number().int().min(0).max(7).optional(),
   routeIndex: z.number().int().optional(),
   evento_id: z.string().uuid().optional(),
+  destino_lat: z.number().optional(),
+  destino_lng: z.number().optional(),
+  origen_lat: z.number().optional(),
+  origen_lng: z.number().optional(),
 });
 
 const trayectoSchemaPartial = trayectSchema.partial();

@@ -270,7 +270,14 @@ POST /api/reserva/qr
 
 **Autenticación:** Requerida (`authenticate`)
 
-**Descripción:** Crea una reserva con estado `completed` y registra automáticamente el evento de recogida (`recogida`) en una sola transacción. Pensado para el flujo de unión a un trayecto mediante código QR, donde el pasajero ya está físicamente con el conductor. No requiere pasarela de pago (la reserva se marca como completada directamente). Si el usuario ya tenía una reserva cancelada, la reactiva. También decrementa la disponibilidad del trayecto y crea el evento `reserva_creada`.
+**Descripción:** Crea una reserva mediante código QR, donde el pasajero ya está físicamente con el conductor. El comportamiento depende de si el trayecto es gratuito o de pago:
+
+- **Trayecto gratuito (precio = 0):** La reserva se crea directamente con estado `completed` y se genera el evento de `recogida` inmediatamente.
+- **Trayecto de pago:** Se crea una sesión de Stripe Checkout e intenta confirmar el PaymentIntent automáticamente usando el método de pago guardado del pasajero (cargo directo `off_session`):
+  - **Si el pago se confirma:** La reserva se crea con estado `completed` y se genera el evento de `recogida`.
+  - **Si no hay método de pago guardado o falla el cargo:** La reserva se crea con estado `pending` y se devuelve la URL de Stripe Checkout para que el pasajero complete el pago manualmente. El evento de `recogida` se generará cuando el webhook confirme el pago.
+
+En todos los casos se decrementa la disponibilidad del trayecto y se crea el evento `reserva_creada`. Si el usuario ya tenía una reserva cancelada, la reactiva.
 
 **Body (JSON):**
 
@@ -282,13 +289,13 @@ POST /api/reserva/qr
 }
 ```
 
-| Campo         | Tipo          | Requerido | Descripción                              |
-| ------------- | ------------- | --------- | ---------------------------------------- |
-| `trayecto_id` | string (UUID) | Sí        | ID del trayecto al que se une            |
-| `lat`         | number        | Sí        | Latitud de la ubicación de recogida      |
-| `lng`         | number        | Sí        | Longitud de la ubicación de recogida     |
+| Campo         | Tipo          | Requerido | Descripción                          |
+| ------------- | ------------- | --------- | ------------------------------------ |
+| `trayecto_id` | string (UUID) | Sí        | ID del trayecto al que se une        |
+| `lat`         | number        | Sí        | Latitud de la ubicación de recogida  |
+| `lng`         | number        | Sí        | Longitud de la ubicación de recogida |
 
-**Respuesta 201:**
+**Respuesta 201 (pago confirmado o trayecto gratuito):**
 
 ```json
 {
@@ -299,6 +306,24 @@ POST /api/reserva/qr
     "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "trayecto_id": "550e8400-e29b-41d4-a716-446655440000",
     "status": "completed"
+  }
+}
+```
+
+**Respuesta 201 (pago pendiente — sin método de pago guardado):**
+
+```json
+{
+  "status": "Success",
+  "message": "Reserva creada en estado pendiente. Se requiere completar el pago.",
+  "requires_payment": true,
+  "stripe_url": "https://checkout.stripe.com/c/pay/cs_...",
+  "stripe_checkout_session_id": "cs_test_...",
+  "reserva": {
+    "id": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "trayecto_id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "pending"
   }
 }
 ```

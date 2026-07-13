@@ -659,7 +659,7 @@ DELETE /api/trayecto/:id
 
 ---
 
-### 17. Crear trayecto hacia un evento
+### 17. Crear trayecto hacia/desde un evento
 
 ```
 POST /api/trayecto/evento
@@ -667,9 +667,14 @@ POST /api/trayecto/evento
 
 **Autenticación:** Requerida (`authenticate`)
 
-**Descripción:** Crea un nuevo trayecto cuyo destino es la ubicación de un evento. Realiza una petición al microservicio de usuarios (`GET /api/eventos/:evento_id`) para obtener la ubicación del evento y la usa como `destino` del trayecto. El resto del proceso es idéntico al de crear un trayecto normal: geocodificación con Google Maps, cálculo automático del precio según la provincia y creación del chat asociado.
+**Descripción:** Crea un nuevo trayecto asociado a un evento. Realiza una petición al microservicio de usuarios (`GET /api/events/:evento_id`) para obtener las coordenadas del evento. Soporta dos modos:
 
-**Body (JSON):**
+- **Trayecto de ida:** El conductor envía `origen` (su punto de partida). El destino se establece automáticamente como la ubicación del evento.
+- **Trayecto de vuelta:** El conductor envía `destino` (su punto de llegada). El origen se establece automáticamente como la ubicación del evento.
+
+Es obligatorio enviar **uno de los dos** (`origen` o `destino`), pero no ambos. Las coordenadas del evento se pasan directamente al trayecto sin geocodificación redundante. El resto del proceso es idéntico al de crear un trayecto normal: geocodificación del punto del usuario, cálculo automático del precio según la provincia y creación del chat asociado.
+
+**Body (JSON) — Trayecto de ida:**
 
 ```json
 {
@@ -685,19 +690,36 @@ POST /api/trayecto/evento
 }
 ```
 
-| Campo        | Tipo          | Requerido | Validación                                                 |
-| ------------ | ------------- | --------- | ---------------------------------------------------------- |
-| `evento_id`  | string (UUID) | Sí        | UUID del evento hacia el que se dirige el trayecto         |
-| `origen`     | string        | Sí        | min 2, max 100                                             |
-| `fecha`      | string        | Sí        | Formato `YYYY-MM-DD`                                       |
-| `hora`       | string        | Sí        | Formato `HH:MM` (24h)                                      |
-| `plazas`     | number        | Sí        | 1–7                                                        |
-| `conductor`  | string (UUID) | Sí        | UUID del conductor (si no se envía, usa `req.user.userId`) |
-| `disponible` | number        | No        | 0–7 (por defecto = `plazas`)                               |
-| `precio`     | number        | Sí        | >= 0 (se sobrescribe con cálculo automático)               |
-| `routeIndex` | number        | No        | Int                                                        |
+**Body (JSON) — Trayecto de vuelta:**
 
-> **Nota:** No es necesario enviar `destino`; se obtiene automáticamente desde la información del evento en el microservicio de usuarios. El campo `evento_id` se almacena en el trayecto para permitir búsquedas rápidas.
+```json
+{
+  "evento_id": "f1e2d3c4-b5a6-7890-abcd-ef1234567890",
+  "destino": "Madrid, Calle Gran Vía 1",
+  "fecha": "2025-01-15",
+  "hora": "18:00",
+  "plazas": 4,
+  "conductor": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "disponible": 4,
+  "precio": 0,
+  "routeIndex": 0
+}
+```
+
+| Campo        | Tipo          | Requerido   | Validación                                                 |
+| ------------ | ------------- | ----------- | ---------------------------------------------------------- |
+| `evento_id`  | string (UUID) | Sí          | UUID del evento asociado                                   |
+| `origen`     | string        | Condicional | min 2, max 100. Enviar `origen` O `destino` (no ambos)     |
+| `destino`    | string        | Condicional | min 2, max 100. Enviar `origen` O `destino` (no ambos)     |
+| `fecha`      | string        | Sí          | Formato `YYYY-MM-DD`                                       |
+| `hora`       | string        | Sí          | Formato `HH:MM` (24h)                                      |
+| `plazas`     | number        | Sí          | 1–7                                                        |
+| `conductor`  | string (UUID) | Sí          | UUID del conductor (si no se envía, usa `req.user.userId`) |
+| `disponible` | number        | No          | 0–7 (por defecto = `plazas`)                               |
+| `precio`     | number        | Sí          | >= 0 (se sobrescribe con cálculo automático)               |
+| `routeIndex` | number        | No          | Int                                                        |
+
+> **Nota:** El punto no enviado (`origen` o `destino`) se obtiene automáticamente desde las coordenadas del evento en el microservicio de usuarios. El campo `evento_id` se almacena en el trayecto para permitir búsquedas rápidas.
 
 **Respuesta 201:**
 
@@ -708,7 +730,7 @@ POST /api/trayecto/evento
   "trayecto": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "origen": "Madrid, Calle Gran Vía 1",
-    "destino": "Ubicación del evento",
+    "destino": "Nombre del evento",
     "fecha": "2025-01-15",
     "hora": "10:00",
     "plazas": 4,
@@ -721,7 +743,7 @@ POST /api/trayecto/evento
 
 **Errores:**
 
-- `400` — `evento_id` faltante, fecha inválida, conductor no existe, o el evento no tiene una ubicación válida.
+- `400` — `evento_id` faltante, ni `origen` ni `destino` enviados, fecha inválida, conductor no existe, o el evento no tiene una ubicación válida.
 - `404` — No se pudo obtener la información del evento desde el microservicio de usuarios.
 - `502` — No se pudo calcular el precio del gasoil o error al crear el chat.
 
@@ -1111,6 +1133,70 @@ POST /api/trayecto/:id/llegada
 - `403` — El conductor no puede registrar llegada a destino, o no tienes reserva activa.
 - `404` — Trayecto no encontrado.
 - `409` — El pasajero no ha sido recogido previamente, o ya se registró la llegada.
+
+---
+
+## Informes CAE (Certificados de Ahorro de Energía)
+
+Cuando un trayecto finaliza, se genera automáticamente y de forma asíncrona un informe CAE que calcula los kilómetros recorridos y la energía (kWh) generada por el carpooling.
+
+### Modelo de datos
+
+#### InfoCAEs (`info_caes`)
+
+| Campo             | Tipo     | Descripción                                       |
+| ----------------- | -------- | ------------------------------------------------- |
+| `id`              | UUID     | Identificador único del informe                   |
+| `id_trayecto`     | UUID     | ID del trayecto asociado                          |
+| `km_recorridos`   | Float    | Kilómetros totales recorridos por el conductor    |
+| `km_with_company` | Float    | Kilómetros recorridos con pasajeros a bordo       |
+| `kwh_generated`   | Float    | kWh generados (km acompañado × pasajeros × ratio) |
+| `status_id`       | Int (FK) | Estado del informe (ver `StatusInfoCAEs`)         |
+| `created_at`      | DateTime | Fecha de creación                                 |
+| `updated_at`      | DateTime | Fecha de actualización                            |
+
+#### StatusInfoCAEs (`status_info_caes`)
+
+| Campo         | Tipo   | Descripción                         |
+| ------------- | ------ | ----------------------------------- |
+| `id`          | Int    | Identificador único (autoincrement) |
+| `name`        | String | Nombre del estado                   |
+| `description` | String | Descripción del estado              |
+
+**Estados disponibles:**
+
+| Estado      | Descripción                  |
+| ----------- | ---------------------------- |
+| `pending`   | Informe pendiente de cálculo |
+| `in_review` | Informe en revisión          |
+| `canceled`  | Informe cancelado            |
+| `completed` | Informe completado           |
+
+### Cálculo de kWh
+
+La fórmula de generación de kWh es:
+
+```
+kwh = km_with_company × num_pasajeros_en_segmento × KWH_PER_PASSENGER_KM
+```
+
+Donde `KWH_PER_PASSENGER_KM` se configura en el archivo `.env` (por defecto `0.7`).
+
+- Los kWh **solo** se generan cuando el conductor va acompañado.
+- Si lleva 1 pasajero: `0.7 kWh/km`.
+- Si lleva 2 pasajeros: `0.7 × 2 = 1.4 kWh/km`.
+- Si va solo: `0 kWh` (no genera energía).
+
+### Proceso
+
+1. Al finalizar un trayecto (`POST /api/trayecto/:id/finalizar`), se crea un registro `InfoCAEs` con estado `pending`.
+2. Asíncronamente (sin bloquear la respuesta al cliente), se calculan:
+   - **km_recorridos:** distancia total desde los puntos de `Recorrido` del conductor (Haversine entre puntos consecutivos). Si no hay puntos suficientes, se usa la distancia directa origen-destino.
+   - **km_with_company:** suma de los segmentos donde había al menos un pasajero a bordo (determinado por eventos de `recogida` y `llegada_destino`).
+   - **kwh_generated:** suma por segmento de `km_segmento × pasajeros_en_segmento × KWH_PER_PASSENGER_KM`.
+3. Al completar el cálculo, el estado pasa a `completed`.
+
+> **Nota:** El cálculo es asíncrono y no bloquea la finalización del trayecto. Si hay un error, el informe queda en estado `pending`.
 
 ---
 

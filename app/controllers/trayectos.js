@@ -9,6 +9,7 @@ import {
   notifyTrayectoEnCurso,
 } from "../cron-jobs.js";
 import { UsersAPI } from "../utils/users-api.js";
+import { CAEUtils } from "../utils/cae.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -188,6 +189,10 @@ async function crearTrayecto(req, res) {
     precio,
     routeIndex,
     evento_id,
+    destino_lat,
+    destino_lng,
+    origen_lat,
+    origen_lng,
   } = validation.data;
   let conductor_id = conductor;
   console.log(
@@ -223,14 +228,51 @@ async function crearTrayecto(req, res) {
   let destinationDetails;
   try {
     console.log("[crearTrayecto] Geocodificando origen:", origen);
-    originDetails = await GoogleMapsProvider.geocodeAddressDetails(origen);
+    if (origen_lat != null && origen_lng != null) {
+      console.log(
+        "[crearTrayecto] Usando coordenadas pre-calculadas para origen:",
+        origen_lat,
+        origen_lng,
+      );
+      const revDetails = await GoogleMapsProvider.reverseGeocodeAddressDetails(
+        origen_lat,
+        origen_lng,
+      );
+      originDetails = {
+        lat: origen_lat,
+        lng: origen_lng,
+        city: revDetails.city,
+        province: revDetails.province,
+      };
+    } else {
+      originDetails = await GoogleMapsProvider.geocodeAddressDetails(origen);
+    }
     console.log(
       "[crearTrayecto] Origen geocodificado:",
       JSON.stringify(originDetails),
     );
-    console.log("[crearTrayecto] Geocodificando destino:", destino);
-    destinationDetails =
-      await GoogleMapsProvider.geocodeAddressDetails(destino);
+
+    if (destino_lat != null && destino_lng != null) {
+      console.log(
+        "[crearTrayecto] Usando coordenadas pre-calculadas para destino:",
+        destino_lat,
+        destino_lng,
+      );
+      const revDetails = await GoogleMapsProvider.reverseGeocodeAddressDetails(
+        destino_lat,
+        destino_lng,
+      );
+      destinationDetails = {
+        lat: destino_lat,
+        lng: destino_lng,
+        city: revDetails.city,
+        province: revDetails.province,
+      };
+    } else {
+      console.log("[crearTrayecto] Geocodificando destino:", destino);
+      destinationDetails =
+        await GoogleMapsProvider.geocodeAddressDetails(destino);
+    }
     console.log(
       "[crearTrayecto] Destino geocodificado:",
       JSON.stringify(destinationDetails),
@@ -904,6 +946,10 @@ async function finalizarTrayecto(req, res) {
       hora: true,
       conductor: true,
       status: true,
+      origen_lat: true,
+      origen_lng: true,
+      destino_lat: true,
+      destino_lng: true,
     },
   });
   if (!trayecto) {
@@ -964,6 +1010,10 @@ async function finalizarTrayecto(req, res) {
   } catch (e) {
     console.error("Error creando evento de finalizacion:", e);
   }
+
+  CAEUtils.generateInfoCAE(trayectoId).catch((e) => {
+    console.error("[CAE] Error generando informe:", e);
+  });
 
   return res.status(200).send({
     status: "Success",
@@ -1472,7 +1522,8 @@ async function obtenerTrayectoCompleto(req, res) {
 }
 
 async function crearTrayectoEvento(req, res) {
-  const { evento_id } = req.body;
+  const { evento_id, origen, destino } = req.body;
+  console.log(req.body);
   if (!evento_id) {
     return res.status(400).send({
       status: "Error",
@@ -1481,29 +1532,48 @@ async function crearTrayectoEvento(req, res) {
     });
   }
 
+  if (!origen && !destino) {
+    return res.status(400).send({
+      status: "Error",
+      message:
+        "Debe indicar 'origen' (trayecto de ida) o 'destino' (trayecto de vuelta)",
+    });
+  }
+
   const { headers } = getAuthHeaders(req);
 
-  const eventoInfo = await UsersAPI.fetchEventoInfo(evento_id, { headers });
+  let eventoInfo = await UsersAPI.fetchEventoInfo(evento_id, { headers });
   if (!eventoInfo) {
     return res.status(404).send({
       status: "Error",
       message: "No se pudo obtener la información del evento",
     });
   }
+  eventoInfo = eventoInfo.event;
 
-  const destino =
-    eventoInfo.ubicacion ||
-    eventoInfo.direccion ||
-    eventoInfo.location ||
-    eventoInfo.address;
-  if (!destino) {
+  if (eventoInfo.latitude == null || eventoInfo.longitude == null) {
     return res.status(400).send({
       status: "Error",
       message: "El evento no tiene una ubicación válida",
     });
   }
 
-  req.body.destino = destino;
+  const eventoNombre = eventoInfo.name || "Ubicación del evento";
+  const eventoLat = parseFloat(eventoInfo.latitude);
+  const eventoLng = parseFloat(eventoInfo.longitude);
+
+  if (origen && !destino) {
+    // Trayecto de ida: origen del usuario, destino = evento
+    req.body.destino = eventoNombre;
+    req.body.destino_lat = eventoLat;
+    req.body.destino_lng = eventoLng;
+  } else if (destino && !origen) {
+    // Trayecto de vuelta: origen = evento, destino del usuario
+    req.body.origen = eventoNombre;
+    req.body.origen_lat = eventoLat;
+    req.body.origen_lng = eventoLng;
+  }
+
   req.body.evento_id = evento_id;
 
   return crearTrayecto(req, res);

@@ -209,3 +209,33 @@ model EventoTrayecto {
 
   @@map("eventos_trayectos")
 }
+
+
+
+model InfoCAEs {
+  id              String   @id @db.VarChar(36)
+  id_trayecto     String   @db.VarChar(36)
+  km_recorridos   Float    @default(0)
+  km_with_company Float    @default(0)
+  kwh_generated   Float    @default(0)
+  status_id       Int
+  created_at      DateTime @default(now())
+  updated_at      DateTime @default(now()) @updatedAt
+
+  StatusInfoCAEs  StatusInfoCAEs @relation(fields: [status_id], references: [id])
+
+  @@index([id_trayecto], name: "idx_infocaes_trayecto")
+  @@index([status_id], name: "idx_infocaes_status")
+
+  @@map("info_caes")
+}
+
+model StatusInfoCAEs {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(30)
+  description String?  @db.Text
+
+  InfoCAEs    InfoCAEs[]
+
+  @@map("status_info_caes")
+}

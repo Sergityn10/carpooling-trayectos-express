@@ -108,6 +108,21 @@ const initDatabase = async () => {
       create: tipoEvento,
     });
   }
+
+  // Seed/actualizar status_info_caes
+  const statusCAEs = [
+    { name: "pending", description: "CAE report pending calculation" },
+    { name: "in_review", description: "CAE report under review" },
+    { name: "canceled", description: "CAE report canceled" },
+    { name: "completed", description: "CAE report completed" },
+  ];
+  for (const status of statusCAEs) {
+    await prisma.statusInfoCAEs.upsert({
+      where: { name: status.name },
+      update: { description: status.description },
+      create: status,
+    });
+  }
 };
 
 const getConnection = async () => {

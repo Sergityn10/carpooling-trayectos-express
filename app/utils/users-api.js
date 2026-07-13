@@ -98,7 +98,7 @@ async function fetchEventoInfo(eventoId, { headers = {} } = {}) {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(`${USUARIOS_URL}/api/eventos/${eventoId}`, {
+    const res = await fetch(`${USUARIOS_URL}/api/events/${eventoId}`, {
       method: "GET",
       credentials: "include",
       headers: { "Content-Type": "application/json", ...headers },
