@@ -1,11 +1,7 @@
 import cron from "node-cron";
 import { prisma } from "./database.js";
 import { UsersAPI } from "./utils/users-api.js";
-import {
-  sendTrayectoAPuntoDeComenzar,
-  sendTrayectoEnCursoEmail,
-  sendTrayectoFinalizadoConfirmacionEmail,
-} from "./utils/mailer.js";
+import { NotificationsAPI } from "./utils/notifications-api.js";
 
 function getMessagesBaseHeaders() {
   const headers = {
@@ -108,29 +104,81 @@ export async function notifyTrayectoEnCurso(trayecto) {
     trayecto.conductor,
     ...reservas.map((r) => r.user_id),
   ]);
-  const emails = [];
+
+  const trayectoFull = await prisma.trayecto.findUnique({
+    where: { id: trayecto.id },
+    select: { hora: true, plazas: true, disponible: true },
+  });
+  const passengers = reservas.length;
+  const dateStr = trayectoFull?.hora
+    ? new Date(trayectoFull.hora).toLocaleDateString("es-ES", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      })
+    : "";
+  const timeStr = trayectoFull?.hora
+    ? new Date(trayectoFull.hora).toLocaleTimeString("es-ES", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+
+  const emailTasks = [];
+  const pushTasks = [];
 
   for (const uid of userIds) {
     const email = await getUserEmailById(uid);
-    if (email) emails.push(email);
+    const userInfo = await UsersAPI.fetchUserPublicInfo(String(uid));
+    const userName = userInfo?.name || "";
+
+    if (email) {
+      emailTasks.push(
+        NotificationsAPI.sendTemplatedEmail({
+          to: email,
+          template: "trip_started",
+          data: {
+            userName,
+            origin: trayecto.origen,
+            destination: trayecto.destino,
+            date: dateStr,
+            time: timeStr,
+            passengers,
+            tripId: trayecto.id,
+          },
+        }).catch((e) =>
+          console.error("Error email trip_started:", e?.message ?? e),
+        ),
+      );
+    }
+
+    pushTasks.push(
+      NotificationsAPI.sendPushTemplatedToUser({
+        userId: String(uid),
+        template: "trip_started",
+        data: {
+          userName,
+          origin: trayecto.origen,
+          destination: trayecto.destino,
+          tripId: trayecto.id,
+        },
+        priority: "high",
+      }).catch((e) =>
+        console.error("Error push trip_started:", e?.message ?? e),
+      ),
+    );
   }
 
-  if (emails.length === 0) return;
+  if (emailTasks.length === 0 && pushTasks.length === 0) return;
 
-  const results = await Promise.allSettled(
-    emails.map((to) =>
-      sendTrayectoEnCursoEmail({
-        to,
-        trayecto,
-      }),
-    ),
-  );
-
-  for (const r of results) {
+  const emailResults = await Promise.allSettled(emailTasks);
+  for (const r of emailResults) {
     if (r.status === "rejected") {
       console.error("Error enviando emails de trayecto en curso:", r.reason);
     }
   }
+
+  await Promise.allSettled(pushTasks);
 }
 
 export async function notifyTrayectoFinalizado(trayecto) {
@@ -143,32 +191,87 @@ export async function notifyTrayectoFinalizado(trayecto) {
     distinct: ["user_id"],
   });
 
-  const userIds = new Set([...reservas.map((r) => r.user_id)]);
-  const emails = [];
+  const userIds = new Set([
+    trayecto.conductor,
+    ...reservas.map((r) => r.user_id),
+  ]);
+
+  const trayectoFull = await prisma.trayecto.findUnique({
+    where: { id: trayecto.id },
+    select: { hora: true, precio: true },
+  });
+  const passengers = reservas.length;
+  const earnings = (trayectoFull?.precio ?? 0) * passengers;
+  const dateStr = trayectoFull?.hora
+    ? new Date(trayectoFull.hora).toLocaleDateString("es-ES", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      })
+    : "";
+  const timeStr = trayectoFull?.hora
+    ? new Date(trayectoFull.hora).toLocaleTimeString("es-ES", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+
+  const emailTasks = [];
+  const pushTasks = [];
 
   for (const uid of userIds) {
     const email = await getUserEmailById(uid);
-    if (email) emails.push(email);
+    const userInfo = await UsersAPI.fetchUserPublicInfo(String(uid));
+    const userName = userInfo?.name || "";
+
+    if (email) {
+      emailTasks.push(
+        NotificationsAPI.sendTemplatedEmail({
+          to: email,
+          template: "trip_completed",
+          data: {
+            userName,
+            origin: trayecto.origen,
+            destination: trayecto.destino,
+            date: dateStr,
+            time: timeStr,
+            passengers,
+            earnings,
+            tripId: trayecto.id,
+          },
+        }).catch((e) =>
+          console.error("Error email trip_completed:", e?.message ?? e),
+        ),
+      );
+    }
+
+    pushTasks.push(
+      NotificationsAPI.sendPushTemplatedToUser({
+        userId: String(uid),
+        template: "trip_completed",
+        data: {
+          userName,
+          origin: trayecto.origen,
+          destination: trayecto.destino,
+          tripId: trayecto.id,
+        },
+        priority: "high",
+      }).catch((e) =>
+        console.error("Error push trip_completed:", e?.message ?? e),
+      ),
+    );
   }
 
-  if (emails.length === 0) return;
+  if (emailTasks.length === 0 && pushTasks.length === 0) return;
 
-  const frontendUrl = process.env.FRONTEND_URL;
-  const results = await Promise.allSettled(
-    emails.map((to) =>
-      sendTrayectoFinalizadoConfirmacionEmail({
-        to,
-        trayecto,
-        frontendUrl,
-      }),
-    ),
-  );
-
-  for (const r of results) {
+  const emailResults = await Promise.allSettled(emailTasks);
+  for (const r of emailResults) {
     if (r.status === "rejected") {
       console.error("Error enviando emails de trayecto finalizado:", r.reason);
     }
   }
+
+  await Promise.allSettled(pushTasks);
 }
 
 async function tickTrayectoStatusAndNotify() {
@@ -277,9 +380,10 @@ async function tickTrayectosAPuntoDeComenzar() {
     if (emails.length > 0) {
       const results = await Promise.allSettled(
         emails.map((to) =>
-          sendTrayectoAPuntoDeComenzar({
+          NotificationsAPI.sendEmail({
             to,
-            trayecto,
+            subject: "Tu trayecto va a empezar pronto",
+            text: `Tu trayecto #${trayecto.id} de ${trayecto.origen} a ${trayecto.destino} empieza en menos de 15 minutos.`,
           }),
         ),
       );

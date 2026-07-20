@@ -185,6 +185,7 @@ async function crearTrayecto(req, res) {
     hora,
     plazas,
     conductor,
+    vehiculo_id,
     disponible,
     precio,
     routeIndex,
@@ -355,6 +356,7 @@ async function crearTrayecto(req, res) {
         hora: new Date(fechaHoraSQL),
         plazas,
         conductor,
+        vehiculo_id,
         disponible,
         precio,
         status: estadoInicial,
@@ -398,6 +400,28 @@ async function crearTrayecto(req, res) {
       .send({ status: "Error", message: "Error al crear el trayecto" });
   }
 
+  // Generar tramos (pasos de la ruta) asíncronamente
+  try {
+    const steps = await GoogleMapsProvider.getDirections(origen, destino);
+    if (steps.length > 0) {
+      await prisma.tramo.createMany({
+        data: steps.map((step, index) => ({
+          id: randomUUID(),
+          id_trayecto: trayectoId,
+          lat: step.lat,
+          lng: step.lng,
+          address: step.address,
+          step_order: index,
+        })),
+      });
+      console.log(
+        `[crearTrayecto] ${steps.length} tramos guardados para trayecto ${trayectoId}`,
+      );
+    }
+  } catch (e) {
+    console.error("[crearTrayecto] Error generando tramos:", e?.message ?? e);
+  }
+
   // Fetch conductor name from users microservice
   console.log("[crearTrayecto] Obteniendo nombre del conductor:", conductor);
   const conductorInfo = await UsersAPI.fetchUserPublicInfo(String(conductor));
@@ -413,6 +437,7 @@ async function crearTrayecto(req, res) {
     plazas,
     conductor: conductorName,
     conductor_id,
+    vehiculo_id,
     precio,
   };
 
@@ -566,12 +591,25 @@ async function obtenerTrayectos(req, res) {
     userId,
     rows.map((t) => t.id),
   );
+
+  const vehicleIds = [
+    ...new Set(rows.map((t) => t.vehiculo_id).filter(Boolean)),
+  ];
+  const vehicleResults = await Promise.all(
+    vehicleIds.map(async (vid) => {
+      const info = await UsersAPI.fetchVehicleInfo(vid);
+      return [vid, info];
+    }),
+  );
+  const vehicleMap = new Map(vehicleResults.filter(([, v]) => v));
+
   const data = rows.map((t) => {
     const user = usersMap.get(t.conductor);
     return {
       ...t,
       conductor: user?.name || "Desconocido",
       conductor_id: t.conductor,
+      vehiculo: vehicleMap.get(t.vehiculo_id) || null,
       img_perfil: user?.img_perfil || null,
       valorado: ratedIds.has(String(t.id)),
     };
@@ -617,6 +655,8 @@ async function obtenerTrayectoPorId(req, res) {
   );
   const conductorName = conductorInfo?.name || "Desconocido";
   const imgPerfil = conductorInfo?.img_perfil;
+
+  const vehicleInfo = await UsersAPI.fetchVehicleInfo(trayecto.vehiculo_id);
 
   const fecha = new Date(trayecto.hora).toDateString();
   const fechaHora = new Date(trayecto.hora).toISOString();
@@ -668,6 +708,7 @@ async function obtenerTrayectoPorId(req, res) {
     ...trayecto,
     conductor: conductorName,
     conductor_id: trayecto.conductor,
+    vehiculo: vehicleInfo,
     hora: fechaHora,
     fecha,
     img_perfil: imgPerfil,
@@ -786,6 +827,36 @@ async function obtenerProximosTrayectos(req, res) {
   const now = new Date();
   const twoDaysLater = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
 
+  console.log("[obtenerProximosTrayectos] userId:", id);
+  console.log("[obtenerProximosTrayectos] now:", now.toISOString());
+  console.log(
+    "[obtenerProximosTrayectos] twoDaysLater:",
+    twoDaysLater.toISOString(),
+  );
+
+  // Diagnostic: find all trips where the user has a non-canceled reservation
+  const userReservas = await prisma.reserva.findMany({
+    where: { user_id: id, status: { notIn: ["canceled"] } },
+    select: { id_trayecto: true, status: true },
+  });
+  console.log("[obtenerProximosTrayectos] Reservas del usuario:", userReservas);
+
+  if (userReservas.length > 0) {
+    const trayectoIds = userReservas.map((r) => r.id_trayecto);
+    const userTrips = await prisma.trayecto.findMany({
+      where: { id: { in: trayectoIds } },
+      select: { id: true, hora: true, status: true, conductor: true },
+    });
+    console.log(
+      "[obtenerProximosTrayectos] Trayectos reservados por el usuario:",
+    );
+    for (const t of userTrips) {
+      console.log(
+        `  - id=${t.id} hora=${t.hora?.toISOString()} status=${t.status} conductor=${t.conductor === id ? "SÍ" : "no"}`,
+      );
+    }
+  }
+
   const rows = await prisma.trayecto.findMany({
     where: {
       AND: [
@@ -810,6 +881,8 @@ async function obtenerProximosTrayectos(req, res) {
     },
     orderBy: { hora: "asc" },
   });
+
+  console.log("[obtenerProximosTrayectos] Resultados del query:", rows.length);
 
   const conductorIds = [...new Set(rows.map((t) => String(t.conductor)))];
   const usersList = await UsersAPI.fetchUsersByIds(conductorIds);
@@ -1106,6 +1179,7 @@ async function patchTrayecto(req, res) {
     hora,
     plazas,
     conductor,
+    vehiculo_id,
     precio,
     routeIndex,
   } = validation.data;
@@ -1143,6 +1217,7 @@ async function patchTrayecto(req, res) {
   updateData.hora = new Date(fechaHora);
   updateData.plazas = plazas;
   updateData.conductor = conductor;
+  updateData.vehiculo_id = vehiculo_id;
   updateData.precio = precio;
   updateData.routeIndex = routeIndex;
 
@@ -1247,11 +1322,31 @@ async function buscarTrayectos(req, res) {
 
     const rows = await prisma.trayecto.findMany({
       where: {
-        origen_lat: { gte: originMinLat, lte: originMaxLat },
-        origen_lng: { gte: originMinLng, lte: originMaxLng },
-        destino_lat: { gte: destMinLat, lte: destMaxLat },
-        destino_lng: { gte: destMinLng, lte: destMaxLng },
         disponible: { gte: seats },
+        OR: [
+          {
+            origen_lat: { gte: originMinLat, lte: originMaxLat },
+            origen_lng: { gte: originMinLng, lte: originMaxLng },
+            destino_lat: { gte: destMinLat, lte: destMaxLat },
+            destino_lng: { gte: destMinLng, lte: destMaxLng },
+          },
+          {
+            Tramos: {
+              some: {
+                lat: { gte: originMinLat, lte: originMaxLat },
+                lng: { gte: originMinLng, lte: originMaxLng },
+              },
+            },
+          },
+          {
+            Tramos: {
+              some: {
+                lat: { gte: destMinLat, lte: destMaxLat },
+                lng: { gte: destMinLng, lte: destMaxLng },
+              },
+            },
+          },
+        ],
       },
       orderBy: { hora: "asc" },
     });
@@ -1271,6 +1366,23 @@ async function buscarTrayectos(req, res) {
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       return EARTH_RADIUS_KM * c;
     };
+
+    // Fetch tramos for candidate trayectos to check proximity
+    const candidateIds = dateFiltered.map((t) => t.id);
+    let tramosByTrayecto = new Map();
+    if (candidateIds.length > 0) {
+      const tramos = await prisma.tramo.findMany({
+        where: { id_trayecto: { in: candidateIds } },
+        select: { id_trayecto: true, lat: true, lng: true },
+      });
+      for (const tramo of tramos) {
+        if (!tramosByTrayecto.has(tramo.id_trayecto)) {
+          tramosByTrayecto.set(tramo.id_trayecto, []);
+        }
+        tramosByTrayecto.get(tramo.id_trayecto).push(tramo);
+      }
+    }
+
     let filtered = [];
     if (dateFiltered.length > 0) {
       filtered = dateFiltered.filter((t) => {
@@ -1286,7 +1398,31 @@ async function buscarTrayectos(req, res) {
           t.destino_lat,
           t.destino_lng,
         );
-        return dOrigin <= SEARCH_DISTANCE_KM && dDest <= SEARCH_DISTANCE_KM;
+        // Match if origin and destination are both close
+        if (dOrigin <= SEARCH_DISTANCE_KM && dDest <= SEARCH_DISTANCE_KM) {
+          return true;
+        }
+        // Also match if any tramo is close to both origin and destination
+        const tramos = tramosByTrayecto.get(t.id) || [];
+        const hasOriginMatch = tramos.some(
+          (tr) =>
+            haversineKm(
+              userOriginCoords.lat,
+              userOriginCoords.lng,
+              tr.lat,
+              tr.lng,
+            ) <= SEARCH_DISTANCE_KM,
+        );
+        const hasDestMatch = tramos.some(
+          (tr) =>
+            haversineKm(
+              userDestCoords.lat,
+              userDestCoords.lng,
+              tr.lat,
+              tr.lng,
+            ) <= SEARCH_DISTANCE_KM,
+        );
+        return hasOriginMatch && hasDestMatch;
       });
     }
 

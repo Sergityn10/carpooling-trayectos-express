@@ -3,6 +3,7 @@ import { ReservaSchema } from "../schemas/reserva.js";
 import { prisma } from "../database.js";
 import dotenv from "dotenv";
 import { UsersAPI } from "../utils/users-api.js";
+import { NotificationsAPI } from "../utils/notifications-api.js";
 
 import Stripe from "stripe";
 dotenv.config();
@@ -86,6 +87,84 @@ async function getReservaWithTrayecto(idReserva) {
     origen_lat: Trayecto.origen_lat,
     origen_lng: Trayecto.origen_lng,
   };
+}
+
+async function notifyConductorNewReservation({
+  conductorId,
+  conductorEmail,
+  conductorName,
+  passengerId,
+  trayectoId,
+  origen,
+  destino,
+}) {
+  const passengerInfo = await UsersAPI.fetchUserPublicInfo(passengerId);
+  const passengerName = passengerInfo?.name || "Un usuario";
+
+  const trayectoFull = await prisma.trayecto.findUnique({
+    where: { id: trayectoId },
+    select: { hora: true, plazas: true, disponible: true },
+  });
+
+  const seatsRemaining = trayectoFull?.disponible ?? 0;
+  const horaDate = trayectoFull?.hora ? new Date(trayectoFull.hora) : null;
+  const dateStr = horaDate
+    ? horaDate.toLocaleDateString("es-ES", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      })
+    : "";
+  const timeStr = horaDate
+    ? horaDate.toLocaleTimeString("es-ES", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+
+  const templateData = {
+    userName: conductorName || "",
+    passengerName,
+    origin: origen,
+    destination: destino,
+    date: dateStr,
+    time: timeStr,
+    seatsBooked: 1,
+    seatsRemaining,
+    tripId: trayectoId,
+  };
+
+  const tasks = [];
+
+  tasks.push(
+    NotificationsAPI.sendPushTemplatedToUser({
+      userId: conductorId,
+      template: "trip_booked",
+      data: {
+        userName: conductorName || "",
+        passengerName,
+        origin: origen,
+        destination: destino,
+        tripId: trayectoId,
+        seatsBooked: 1,
+      },
+      priority: "high",
+    }).catch((e) => console.error("Error push trip_booked:", e?.message ?? e)),
+  );
+
+  if (conductorEmail) {
+    tasks.push(
+      NotificationsAPI.sendTemplatedEmail({
+        to: conductorEmail,
+        template: "trip_booked",
+        data: templateData,
+      }).catch((e) =>
+        console.error("Error email trip_booked:", e?.message ?? e),
+      ),
+    );
+  }
+
+  await Promise.allSettled(tasks);
 }
 
 async function addReserva(req, res) {
@@ -389,6 +468,24 @@ async function addReserva(req, res) {
     } catch (e) {
       console.error("Error creando evento de reserva_creada:", e);
     }
+  }
+
+  // Notificar al conductor: push + email (fire-and-forget)
+  if (!duplicado) {
+    notifyConductorNewReservation({
+      conductorId: String(trayecto.conductor),
+      conductorEmail: conductorInfo?.email,
+      conductorName,
+      passengerId: String(userId),
+      trayectoId: trayecto_id,
+      origen: trayecto.origen,
+      destino: trayecto.destino,
+    }).catch((e) => {
+      console.error(
+        "Error enviando notificación de nueva reserva al conductor:",
+        e?.message ?? e,
+      );
+    });
   }
 
   const newReserva = {
@@ -1197,12 +1294,10 @@ async function reservaQR(req, res) {
 
   if (!isFree) {
     if (!token) {
-      return res
-        .status(401)
-        .send({
-          status: "Error",
-          message: "No se proporcionó token de acceso",
-        });
+      return res.status(401).send({
+        status: "Error",
+        message: "No se proporcionó token de acceso",
+      });
     }
 
     const totalAmount = Math.round(Number(trayecto.precio) * 100);

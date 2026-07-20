@@ -4,18 +4,19 @@ Documentación de los endpoints de la API REST del backend de carpooling para us
 
 ## Índice
 
-| Archivo | Módulo | Base URL | Descripción |
-|---|---|---|---|
-| [auth.md](./auth.md) | Autenticación de usuarios | `/api/auth` | Login, registro, logout, refresh, validación, OAuth con Google |
-| [users.md](./users.md) | Gestión de usuarios | `/api/users` | Listar, obtener, actualizar, eliminar usuarios, búsqueda por ubicación |
-| [enterprise_auth.md](./enterprise_auth.md) | Autenticación de empresas | `/api/enterprise/auth` | Registro, login, logout, validación de empresas |
-| [enterprise.md](./enterprise.md) | Gestión de empresas | `/api/enterprise` | Perfil de empresa (ver y actualizar) |
-| [enterprise_service_events.md](./enterprise_service_events.md) | Eventos de servicio | `/api/enterprise/service-events` | CRUD de eventos de servicio empresariales |
-| [cars.md](./cars.md) | Coches | `/api/cars` | CRUD de coches de usuarios |
-| [telegram_info.md](./telegram_info.md) | Info de Telegram | `/api/telegram-info` | CRUD de información de Telegram, creación masiva |
-| [payment.md](./payment.md) | Pagos y Stripe | `/api/payment` | Stripe Connect, clientes, monedero, payment intents, payouts, recargas |
-| [webhooks.md](./webhooks.md) | Webhooks | `/api/webhook` | Recepción y procesamiento de eventos de Stripe |
-| [routines.md](./routines.md) | Disponibilidad semanal | `/api/routines` | CRUD de rutinas/disponibilidad semanal de transporte |
+| Archivo                                                        | Módulo                    | Base URL                         | Descripción                                                            |
+| -------------------------------------------------------------- | ------------------------- | -------------------------------- | ---------------------------------------------------------------------- |
+| [auth.md](./auth.md)                                           | Autenticación de usuarios | `/api/auth`                      | Login, registro, logout, refresh, validación, OAuth con Google         |
+| [users.md](./users.md)                                         | Gestión de usuarios       | `/api/users`                     | Listar, obtener, actualizar, eliminar usuarios, búsqueda por ubicación |
+| [trayectos.md](./trayectos.md)                                 | Trayectos                 | `/api/trayecto`                  | CRUD de trayectos, búsqueda, estados, recorridos, recogidas            |
+| [enterprise_auth.md](./enterprise_auth.md)                     | Autenticación de empresas | `/api/enterprise/auth`           | Registro, login, logout, validación de empresas                        |
+| [enterprise.md](./enterprise.md)                               | Gestión de empresas       | `/api/enterprise`                | Perfil de empresa (ver y actualizar)                                   |
+| [enterprise_service_events.md](./enterprise_service_events.md) | Eventos de servicio       | `/api/enterprise/service-events` | CRUD de eventos de servicio empresariales                              |
+| [cars.md](./cars.md)                                           | Coches                    | `/api/cars`                      | CRUD de coches de usuarios                                             |
+| [telegram_info.md](./telegram_info.md)                         | Info de Telegram          | `/api/telegram-info`             | CRUD de información de Telegram, creación masiva                       |
+| [payment.md](./payment.md)                                     | Pagos y Stripe            | `/api/payment`                   | Stripe Connect, clientes, monedero, payment intents, payouts, recargas |
+| [webhooks.md](./webhooks.md)                                   | Webhooks                  | `/api/webhook`                   | Recepción y procesamiento de eventos de Stripe                         |
+| [routines.md](./routines.md)                                   | Disponibilidad semanal    | `/api/routines`                  | CRUD de rutinas/disponibilidad semanal de transporte                   |
 
 ## Autenticación
 

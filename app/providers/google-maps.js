@@ -6,6 +6,7 @@ const GEOCODE_URL =
 const REVERSE_GEOCODE_URL =
   "https://maps.googleapis.com/maps/api/geocode/json?latlng=";
 const SNAP_TO_ROADS_URL = "https://roads.googleapis.com/v1/snapToRoads";
+const DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json";
 const API_KEY = process.env.GOOGLE_MAPS_API_KEY; // Usar tu clave de entorno
 
 async function geocodeRaw(address) {
@@ -145,6 +146,40 @@ async function snapToRoads(points) {
   return snapped;
 }
 
+async function getDirections(origin, destination) {
+  const params = new URLSearchParams({
+    origin: origin,
+    destination: destination,
+    key: API_KEY,
+    language: "es",
+    units: "metric",
+  });
+
+  const response = await fetch(`${DIRECTIONS_URL}?${params.toString()}`);
+  const data = await response.json();
+
+  if (data.status !== "OK" || !data.routes || data.routes.length === 0) {
+    console.warn(`[getDirections] No route found: ${data.status}`);
+    return [];
+  }
+
+  const steps = [];
+  const route = data.routes[0];
+  for (const leg of route.legs) {
+    for (const step of leg.steps) {
+      steps.push({
+        lat: step.end_location.lat,
+        lng: step.end_location.lng,
+        address: step.html_instructions
+          ? step.html_instructions.replace(/<[^>]*>/g, "")
+          : step.maneuver || "",
+      });
+    }
+  }
+
+  return steps;
+}
+
 export const GoogleMapsProvider = {
   geocodeAddress,
   geocodeAddressDetails,
@@ -153,4 +188,5 @@ export const GoogleMapsProvider = {
   reverseGeocodeAddress,
   reverseGeocodeAddressDetails,
   snapToRoads,
+  getDirections,
 };

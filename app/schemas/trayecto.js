@@ -10,6 +10,7 @@ const trayectSchema = z.object({
   plazas: z.number().min(1).max(7),
   precio: z.number().min(0),
   conductor: z.string().min(1),
+  vehiculo_id: z.string().min(1),
   disponible: z.number().int().min(0).max(7).optional(),
   routeIndex: z.number().int().optional(),
   evento_id: z.string().uuid().optional(),

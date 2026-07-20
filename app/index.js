@@ -19,6 +19,7 @@ import {
   startTrayectoStatusCron,
 } from "./cron-jobs.js";
 import { OilPriceProvider } from "./providers/precio-oil.js";
+import { CAEUtils } from "./utils/cae.js";
 
 const app = express();
 app.set("etag", false);
@@ -48,6 +49,7 @@ let list_origins = [
   `${process.env.USUARIOS_URL}`,
   `${process.env.FRONTEND_URL}`,
   "http://localhost:5173",
+  "http://localhost:5174",
   "http://localhost:3000",
   "https://www.youconnext.es",
 ];
@@ -233,6 +235,118 @@ app.get(
 app.delete("/api/trayecto/:id", async (req, res) => {
   TrayectosController.eliminarTrayecto(req, res);
 });
+
+//CAE
+app.get(
+  "/api/cae/balance",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    const userId = req.user?.id || req.user?.userId;
+    if (!userId) {
+      return res
+        .status(401)
+        .send({ status: "Error", message: "No autenticado" });
+    }
+    try {
+      const balance = await CAEUtils.getCAEBalance(userId);
+      return res.status(200).json({
+        status: "Success",
+        ...balance,
+      });
+    } catch (e) {
+      console.error("[CAE] Error obteniendo balance:", e);
+      return res
+        .status(500)
+        .send({ status: "Error", message: "Error al obtener balance CAE" });
+    }
+  },
+);
+
+app.patch(
+  "/api/cae/:id/approve",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res
+        .status(403)
+        .send({ status: "Error", message: "Solo un admin puede aprobar CAEs" });
+    }
+    const { id } = req.params;
+    if (!id) {
+      return res
+        .status(400)
+        .send({ status: "Error", message: "ID de CAE inválido" });
+    }
+    try {
+      await CAEUtils.approveCAE(id);
+      return res.status(200).json({
+        status: "Success",
+        message: "CAE aprobado correctamente",
+      });
+    } catch (e) {
+      console.error("[CAE] Error aprobando CAE:", e);
+      const status = e.message?.includes("no encontrado")
+        ? 404
+        : e.message?.includes("no está en revisión")
+          ? 409
+          : 500;
+      return res.status(status).send({
+        status: "Error",
+        message: e.message ?? "Error al aprobar CAE",
+      });
+    }
+  },
+);
+
+app.get("/api/cae", utilsAuthentication.authenticate, async (req, res) => {
+  if (req.user?.role !== "admin") {
+    return res
+      .status(403)
+      .send({ status: "Error", message: "Solo un admin puede listar CAEs" });
+  }
+  try {
+    const status = req.query.status || undefined;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const result = await CAEUtils.listAllCAEs({ status, page, limit });
+    return res.status(200).json({ status: "Success", ...result });
+  } catch (e) {
+    console.error("[CAE] Error listando CAEs:", e);
+    return res
+      .status(500)
+      .send({ status: "Error", message: "Error al listar CAEs" });
+  }
+});
+
+app.get(
+  "/api/cae/user/:userId",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res
+        .status(403)
+        .send({
+          status: "Error",
+          message: "Solo un admin puede ver CAEs de un usuario",
+        });
+    }
+    const { userId } = req.params;
+    if (!userId) {
+      return res
+        .status(400)
+        .send({ status: "Error", message: "ID de usuario inválido" });
+    }
+    try {
+      const result = await CAEUtils.listCAEsByUser(userId);
+      return res.status(200).json({ status: "Success", ...result });
+    } catch (e) {
+      console.error("[CAE] Error listando CAEs por usuario:", e);
+      return res
+        .status(500)
+        .send({ status: "Error", message: "Error al listar CAEs del usuario" });
+    }
+  },
+);
 
 //Comentarios
 

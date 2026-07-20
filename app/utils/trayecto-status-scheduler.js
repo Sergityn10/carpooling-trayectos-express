@@ -1,9 +1,6 @@
 import { database } from "../database.js";
 import { UsersAPI } from "../utils/users-api.js";
-import {
-  sendTrayectoEnCursoEmail,
-  sendTrayectoFinalizadoConfirmacionEmail,
-} from "./mailer.js";
+import { NotificationsAPI } from "./notifications-api.js";
 
 async function getUserEmailById(userId) {
   if (!userId) return null;
@@ -20,23 +17,77 @@ async function notifyTrayectoEnCurso(connection, trayecto) {
     trayecto.conductor,
     ...(reservas ?? []).map((r) => r.user_id),
   ]);
-  const emails = [];
+
+  const [trayectoRows] = await connection.query(
+    "SELECT hora, plazas, disponible FROM trayectos WHERE id = ?",
+    [trayecto.id],
+  );
+  const trayectoFull = trayectoRows?.[0];
+  const passengers = (reservas ?? []).length;
+  const horaDate = trayectoFull?.hora ? new Date(trayectoFull.hora) : null;
+  const dateStr = horaDate
+    ? horaDate.toLocaleDateString("es-ES", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      })
+    : "";
+  const timeStr = horaDate
+    ? horaDate.toLocaleTimeString("es-ES", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+
+  const emailTasks = [];
+  const pushTasks = [];
 
   for (const uid of userIds) {
     const email = await getUserEmailById(uid);
-    if (email) emails.push(email);
+    const userInfo = await UsersAPI.fetchUserPublicInfo(String(uid));
+    const userName = userInfo?.name || "";
+
+    if (email) {
+      emailTasks.push(
+        NotificationsAPI.sendTemplatedEmail({
+          to: email,
+          template: "trip_started",
+          data: {
+            userName,
+            origin: trayecto.origen,
+            destination: trayecto.destino,
+            date: dateStr,
+            time: timeStr,
+            passengers,
+            tripId: trayecto.id,
+          },
+        }).catch((e) =>
+          console.error("Error email trip_started:", e?.message ?? e),
+        ),
+      );
+    }
+
+    pushTasks.push(
+      NotificationsAPI.sendPushTemplatedToUser({
+        userId: String(uid),
+        template: "trip_started",
+        data: {
+          userName,
+          origin: trayecto.origen,
+          destination: trayecto.destino,
+          tripId: trayecto.id,
+        },
+        priority: "high",
+      }).catch((e) =>
+        console.error("Error push trip_started:", e?.message ?? e),
+      ),
+    );
   }
 
-  if (emails.length === 0) return;
+  if (emailTasks.length === 0 && pushTasks.length === 0) return;
 
-  await Promise.all(
-    emails.map((to) =>
-      sendTrayectoEnCursoEmail({
-        to,
-        trayecto,
-      }),
-    ),
-  );
+  await Promise.allSettled(emailTasks);
+  await Promise.allSettled(pushTasks);
 }
 
 async function notifyTrayectoFinalizado(connection, trayecto) {
@@ -45,26 +96,83 @@ async function notifyTrayectoFinalizado(connection, trayecto) {
     [trayecto.id],
   );
 
-  const userIds = new Set([...(reservas ?? []).map((r) => r.user_id)]);
-  const emails = [];
+  const userIds = new Set([
+    trayecto.conductor,
+    ...(reservas ?? []).map((r) => r.user_id),
+  ]);
+
+  const [trayectoRows] = await connection.query(
+    "SELECT hora, precio FROM trayectos WHERE id = ?",
+    [trayecto.id],
+  );
+  const trayectoFull = trayectoRows?.[0];
+  const passengers = (reservas ?? []).length;
+  const earnings = (trayectoFull?.precio ?? 0) * passengers;
+  const horaDate = trayectoFull?.hora ? new Date(trayectoFull.hora) : null;
+  const dateStr = horaDate
+    ? horaDate.toLocaleDateString("es-ES", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      })
+    : "";
+  const timeStr = horaDate
+    ? horaDate.toLocaleTimeString("es-ES", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+
+  const emailTasks = [];
+  const pushTasks = [];
 
   for (const uid of userIds) {
     const email = await getUserEmailById(uid);
-    if (email) emails.push(email);
+    const userInfo = await UsersAPI.fetchUserPublicInfo(String(uid));
+    const userName = userInfo?.name || "";
+
+    if (email) {
+      emailTasks.push(
+        NotificationsAPI.sendTemplatedEmail({
+          to: email,
+          template: "trip_completed",
+          data: {
+            userName,
+            origin: trayecto.origen,
+            destination: trayecto.destino,
+            date: dateStr,
+            time: timeStr,
+            passengers,
+            earnings,
+            tripId: trayecto.id,
+          },
+        }).catch((e) =>
+          console.error("Error email trip_completed:", e?.message ?? e),
+        ),
+      );
+    }
+
+    pushTasks.push(
+      NotificationsAPI.sendPushTemplatedToUser({
+        userId: String(uid),
+        template: "trip_completed",
+        data: {
+          userName,
+          origin: trayecto.origen,
+          destination: trayecto.destino,
+          tripId: trayecto.id,
+        },
+        priority: "high",
+      }).catch((e) =>
+        console.error("Error push trip_completed:", e?.message ?? e),
+      ),
+    );
   }
 
-  if (emails.length === 0) return;
+  if (emailTasks.length === 0 && pushTasks.length === 0) return;
 
-  const frontendUrl = process.env.FRONTEND_URL;
-  await Promise.all(
-    emails.map((to) =>
-      sendTrayectoFinalizadoConfirmacionEmail({
-        to,
-        trayecto,
-        frontendUrl,
-      }),
-    ),
-  );
+  await Promise.allSettled(emailTasks);
+  await Promise.allSettled(pushTasks);
 }
 
 async function tick() {

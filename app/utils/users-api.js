@@ -114,6 +114,27 @@ async function fetchEventoInfo(eventoId, { headers = {} } = {}) {
   }
 }
 
+async function fetchVehicleInfo(vehicleId, { headers = {} } = {}) {
+  if (!vehicleId) return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`${USUARIOS_URL}/api/cars/${vehicleId}`, {
+      method: "GET",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...headers },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    const body = await res.json();
+    return body?.car ?? body?.data ?? null;
+  } catch (e) {
+    console.error("Error fetching vehicle info:", e?.message ?? e);
+    return null;
+  }
+}
+
 export const UsersAPI = {
   fetchUserPublicInfo,
   fetchUserByEmail,
@@ -123,4 +144,5 @@ export const UsersAPI = {
   fetchUserStripeAccount,
   fetchUsersByIds,
   fetchEventoInfo,
+  fetchVehicleInfo,
 };

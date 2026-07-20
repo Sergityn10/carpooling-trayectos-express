@@ -15,6 +15,7 @@ model Trayecto {
   disponible    Int
   precio        Float
   conductor     String   @db.VarChar(36)
+  vehiculo_id   String   @db.VarChar(36)
   routeIndex    Int?     @default(0)
   status        String   @default("programado") @db.VarChar(20)
   origen_lat    Float?
@@ -27,6 +28,7 @@ model Trayecto {
   updated_at    DateTime @default(now()) @updatedAt
 
   Reservas      Reserva[]
+  Tramos        Tramo[]
 
   @@index([origen_lat, origen_lng], name: "idx_trayectos_origen")
   @@index([destino_lat, destino_lng], name: "idx_trayectos_destino")
@@ -35,6 +37,23 @@ model Trayecto {
   @@index([evento_id], name: "idx_trayectos_evento_id")
 
   @@map("trayectos")
+}
+
+model Tramo {
+  id          String   @id @db.VarChar(36)
+  id_trayecto String   @db.VarChar(36)
+  lat         Float
+  lng         Float
+  address     String   @db.Text
+  step_order  Int      @default(0)
+  created_at  DateTime @default(now())
+
+  Trayecto    Trayecto @relation(fields: [id_trayecto], references: [id])
+
+  @@index([id_trayecto], name: "idx_tramos_trayecto")
+  @@index([lat, lng], name: "idx_tramos_coords")
+
+  @@map("tramos")
 }
 
 model Reserva {
@@ -218,6 +237,7 @@ model InfoCAEs {
   km_recorridos   Float    @default(0)
   km_with_company Float    @default(0)
   kwh_generated   Float    @default(0)
+  eur_generated   Float    @default(0)
   status_id       Int
   created_at      DateTime @default(now())
   updated_at      DateTime @default(now()) @updatedAt

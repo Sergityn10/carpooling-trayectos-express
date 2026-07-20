@@ -58,7 +58,7 @@ GET /api/trayecto/search
 
 **Autenticación:** Opcional (`tryAuthenticate`)
 
-**Descripción:** Busca trayectos por origen, destino, fecha y número de pasajeros. Geocodifica las direcciones de origen y destino del usuario y busca trayectos cuyas coordenadas estén dentro de un radio de 200 metros. Devuelve resultados paginados.
+**Descripción:** Busca trayectos por origen, destino, fecha y número de pasajeros. Geocodifica las direcciones de origen y destino del usuario y busca trayectos cuyas coordenadas estén dentro de un radio de 200 metros. También busca trayectos cuyos **tramos intermedios** (pasos de ruta generados con Google Maps Directions) pasen cerca del origen o destino del usuario. Devuelve resultados paginados.
 
 **Query params:**
 
@@ -231,7 +231,7 @@ POST /api/trayecto
 
 **Autenticación:** Requerida (`authenticate`)
 
-**Descripción:** Crea un nuevo trayecto. Geocodifica origen y destino con Google Maps, calcula automáticamente el precio según el precio medio del gasoil de la provincia, e crea un chat asociado al trayecto en el microservicio de mensajes.
+**Descripción:** Crea un nuevo trayecto. Geocodifica origen y destino con Google Maps, calcula automáticamente el precio según el precio medio del gasoil de la provincia, genera los **tramos** (pasos de la ruta) mediante Google Maps Directions y los guarda en la tabla `tramos`, y crea un chat asociado al trayecto en el microservicio de mensajes.
 
 **Body (JSON):**
 
@@ -1151,6 +1151,7 @@ Cuando un trayecto finaliza, se genera automáticamente y de forma asíncrona un
 | `km_recorridos`   | Float    | Kilómetros totales recorridos por el conductor    |
 | `km_with_company` | Float    | Kilómetros recorridos con pasajeros a bordo       |
 | `kwh_generated`   | Float    | kWh generados (km acompañado × pasajeros × ratio) |
+| `eur_generated`   | Float    | EUR generados (km acompañado × pasajeros × ratio) |
 | `status_id`       | Int (FK) | Estado del informe (ver `StatusInfoCAEs`)         |
 | `created_at`      | DateTime | Fecha de creación                                 |
 | `updated_at`      | DateTime | Fecha de actualización                            |
@@ -1180,12 +1181,24 @@ La fórmula de generación de kWh es:
 kwh = km_with_company × num_pasajeros_en_segmento × KWH_PER_PASSENGER_KM
 ```
 
-Donde `KWH_PER_PASSENGER_KM` se configura en el archivo `.env` (por defecto `0.7`).
+Donde `KWH_PER_PASSENGER_KM` se configura en el archivo `.env` (por defecto `0.7`) y `EUR_PER_PASSENGER_KM` (por defecto `0.04`).
 
 - Los kWh **solo** se generan cuando el conductor va acompañado.
 - Si lleva 1 pasajero: `0.7 kWh/km`.
 - Si lleva 2 pasajeros: `0.7 × 2 = 1.4 kWh/km`.
-- Si va solo: `0 kWh` (no genera energía).
+- Si va solo: `0 kWh` y `0€` (no genera energía ni dinero).
+
+### Cálculo de EUR
+
+La fórmula de generación de EUR es análoga:
+
+```
+eur = km_with_company × num_pasajeros_en_segmento × EUR_PER_PASSENGER_KM
+```
+
+- 1 pasajero: `0.04€/km`.
+- 2 pasajeros: `0.04 × 2 = 0.08€/km`.
+- Si va solo: `0€`.
 
 ### Proceso
 
@@ -1194,9 +1207,212 @@ Donde `KWH_PER_PASSENGER_KM` se configura en el archivo `.env` (por defecto `0.7
    - **km_recorridos:** distancia total desde los puntos de `Recorrido` del conductor (Haversine entre puntos consecutivos). Si no hay puntos suficientes, se usa la distancia directa origen-destino.
    - **km_with_company:** suma de los segmentos donde había al menos un pasajero a bordo (determinado por eventos de `recogida` y `llegada_destino`).
    - **kwh_generated:** suma por segmento de `km_segmento × pasajeros_en_segmento × KWH_PER_PASSENGER_KM`.
-3. Al completar el cálculo, el estado pasa a `completed`.
+   - **eur_generated:** suma por segmento de `km_segmento × pasajeros_en_segmento × EUR_PER_PASSENGER_KM`.
+3. Al completar el cálculo, el estado pasa a `in_review` (en revisión).
+4. Un administrador revisa el informe y lo aprueba mediante `PATCH /api/cae/:id/approve`, cambiando el estado a `completed`.
 
 > **Nota:** El cálculo es asíncrono y no bloquea la finalización del trayecto. Si hay un error, el informe queda en estado `pending`.
+
+### Endpoint de balance CAE
+
+#### Obtener balance del conductor
+
+```
+GET /api/cae/balance
+```
+
+**Auth:** Requerida
+
+**Descripción:** Devuelve el dinero generado por el conductor agrupado por estado de los informes CAE.
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "en_revision": 12.50,
+  "disponible": 45.30,
+  "cancelado": 2.00,
+  "total": 57.80,
+  "detalles": [
+    {
+      "id": "uuid",
+      "id_trayecto": "uuid",
+      "km_recorridos": 120.5,
+      "km_with_company": 85.2,
+      "kwh_generated": 59.64,
+      "eur_generated": 3.41,
+      "status": "completed",
+      "created_at": "2026-07-18T10:00:00Z",
+      "updated_at": "2026-07-18T10:05:00Z"
+    }
+  ]
+}
+```
+
+**Campos:**
+
+| Campo         | Tipo  | Descripción                                              |
+| ------------- | ----- | -------------------------------------------------------- |
+| `en_revision` | Float | EUR en informes `pending` o `in_review` (no disponibles) |
+| `disponible`  | Float | EUR en informes `completed` (listos para retirar)        |
+| `cancelado`   | Float | EUR en informes `canceled`                               |
+| `total`       | Float | Suma de `en_revision` + `disponible`                     |
+| `detalles`    | Array | Listado de informes CAE individuales del conductor       |
+
+**Errores:**
+
+- `401` — No autenticado.
+- `500` — Error al obtener balance CAE.
+
+#### Aprobar CAE (admin)
+
+```
+PATCH /api/cae/:id/approve
+```
+
+**Auth:** Requerida (solo admin)
+
+**Descripción:** Cambia el estado de un informe CAE de `in_review` a `completed`. Solo un administrador puede ejecutar este endpoint. Una vez aprobado, el dinero del informe pasa a estar disponible para el conductor.
+
+**Parámetros de URL:**
+
+- `id` — UUID del informe CAE
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "message": "CAE aprobado correctamente"
+}
+```
+
+**Errores:**
+
+- `401` — No autenticado.
+- `403` — El usuario no es admin.
+- `404` — Informe CAE no encontrado.
+- `409` — El informe no está en estado `in_review`.
+
+#### Listar todos los CAEs (admin)
+
+```
+GET /api/cae
+```
+
+**Auth:** Requerida (solo admin)
+
+**Query params:**
+
+| Param    | Tipo   | Descripción                                                         |
+| -------- | ------ | ------------------------------------------------------------------- |
+| `status` | String | Filtrar por estado: `pending`, `in_review`, `completed`, `canceled` |
+| `page`   | Int    | Página (default 1)                                                  |
+| `limit`  | Int    | Elementos por página (default 50)                                   |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "items": [
+    {
+      "id": "uuid",
+      "id_trayecto": "uuid",
+      "conductor": "uuid-del-conductor",
+      "origen": "Madrid",
+      "destino": "Toledo",
+      "hora": "2026-07-18T10:00:00.000Z",
+      "km_recorridos": 120.5,
+      "km_with_company": 85.2,
+      "kwh_generated": 59.64,
+      "eur_generated": 3.41,
+      "status": "in_review",
+      "created_at": "2026-07-18T10:00:00Z",
+      "updated_at": "2026-07-18T10:05:00Z"
+    }
+  ],
+  "total": 150,
+  "page": 1,
+  "limit": 50
+}
+```
+
+**Errores:**
+
+- `401` — No autenticado.
+- `403` — El usuario no es admin.
+- `500` — Error al listar CAEs.
+
+---
+
+#### Listar CAEs de un usuario (admin)
+
+```
+GET /api/cae/user/:userId
+```
+
+**Auth:** Requerida (solo admin)
+
+**Parámetros de URL:**
+
+- `userId` — UUID del conductor
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "items": [
+    {
+      "id": "uuid",
+      "id_trayecto": "uuid",
+      "origen": "Madrid",
+      "destino": "Toledo",
+      "hora": "2026-07-18T10:00:00.000Z",
+      "km_recorridos": 120.5,
+      "km_with_company": 85.2,
+      "kwh_generated": 59.64,
+      "eur_generated": 3.41,
+      "status": "completed",
+      "created_at": "2026-07-18T10:00:00Z",
+      "updated_at": "2026-07-18T10:05:00Z"
+    }
+  ],
+  "total": 5
+}
+```
+
+**Errores:**
+
+- `401` — No autenticado.
+- `403` — El usuario no es admin.
+- `500` — Error al listar CAEs del usuario.
+
+---
+
+## Tramos de ruta
+
+Al crear un trayecto, se generan automáticamente los pasos de la ruta usando **Google Maps Directions API**. Cada paso se guarda en la tabla `tramos` con sus coordenadas y la indicación de la calle/maniobra.
+
+### Modelo de datos
+
+#### Tramo (`tramos`)
+
+| Campo         | Tipo     | Descripción                                                  |
+| ------------- | -------- | ------------------------------------------------------------ |
+| `id`          | UUID     | Identificador único del tramo                                |
+| `id_trayecto` | UUID     | ID del trayecto al que pertenece                             |
+| `lat`         | Float    | Latitud del punto final del paso                             |
+| `lng`         | Float    | Longitud del punto final del paso                            |
+| `address`     | String   | Indicación del paso (ej. "Gira a la derecha en Calle Mayor") |
+| `step_order`  | Int      | Orden del paso dentro de la ruta (0 = primer paso)           |
+| `created_at`  | DateTime | Fecha de creación                                            |
+
+### Búsqueda por tramos
+
+La búsqueda de trayectos (`GET /api/trayecto/search`) ahora también matches trayectos cuyos tramos intermedios pasan cerca (200m) del origen o destino del usuario. Esto permite encontrar viajes que pasan por zonas intermedias, no solo por el origen y destino exactos.
 
 ---
 

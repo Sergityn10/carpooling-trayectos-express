@@ -8,6 +8,9 @@ dotenv.config();
 const KWH_PER_PASSENGER_KM = parseFloat(
   process.env.KWH_PER_PASSENGER_KM || "0.7",
 );
+const EUR_PER_PASSENGER_KM = parseFloat(
+  process.env.EUR_PER_PASSENGER_KM || "0.04",
+);
 
 const EARTH_RADIUS_KM = 6371;
 
@@ -169,6 +172,7 @@ async function generateInfoCAE(trayectoId) {
 
   let kmWithCompany = 0;
   let kwhGenerated = 0;
+  let eurGenerated = 0;
 
   if (conductorPoints.length >= 2) {
     for (let i = 1; i < conductorPoints.length; i++) {
@@ -191,6 +195,8 @@ async function generateInfoCAE(trayectoId) {
         kmWithCompany += segKm;
         kwhGenerated +=
           segKm * passengersOnSegment.length * KWH_PER_PASSENGER_KM;
+        eurGenerated +=
+          segKm * passengersOnSegment.length * EUR_PER_PASSENGER_KM;
       }
     }
   } else {
@@ -201,15 +207,18 @@ async function generateInfoCAE(trayectoId) {
       kmWithCompany = kmRecorridos;
       kwhGenerated =
         kmRecorridos * activePassengers.length * KWH_PER_PASSENGER_KM;
+      eurGenerated =
+        kmRecorridos * activePassengers.length * EUR_PER_PASSENGER_KM;
     }
   }
 
   kmRecorridos = Math.round(kmRecorridos * 100) / 100;
   kmWithCompany = Math.round(kmWithCompany * 100) / 100;
   kwhGenerated = Math.round(kwhGenerated * 100) / 100;
+  eurGenerated = Math.round(eurGenerated * 100) / 100;
 
-  const completedStatus = await prisma.statusInfoCAEs.findUnique({
-    where: { name: "completed" },
+  const inReviewStatus = await prisma.statusInfoCAEs.findUnique({
+    where: { name: "in_review" },
   });
 
   await prisma.infoCAEs.updateMany({
@@ -218,16 +227,209 @@ async function generateInfoCAE(trayectoId) {
       km_recorridos: kmRecorridos,
       km_with_company: kmWithCompany,
       kwh_generated: kwhGenerated,
-      status_id: completedStatus?.id ?? pendingStatus.id,
+      eur_generated: eurGenerated,
+      status_id: inReviewStatus?.id ?? pendingStatus.id,
     },
   });
 
   console.log(
-    `[CAE] Informe completado para trayecto ${trayectoId}: ` +
-      `${kmRecorridos} km totales, ${kmWithCompany} km acompañado, ${kwhGenerated} kWh generados`,
+    `[CAE] Informe calculado para trayecto ${trayectoId}: ` +
+      `${kmRecorridos} km totales, ${kmWithCompany} km acompañado, ${kwhGenerated} kWh generados, ${eurGenerated}€ generados (en revisión)`,
   );
+}
+
+async function approveCAE(caeId) {
+  const inReviewStatus = await prisma.statusInfoCAEs.findUnique({
+    where: { name: "in_review" },
+  });
+  const completedStatus = await prisma.statusInfoCAEs.findUnique({
+    where: { name: "completed" },
+  });
+
+  if (!inReviewStatus || !completedStatus) {
+    throw new Error("Estados CAE no encontrados en BD");
+  }
+
+  const cae = await prisma.infoCAEs.findUnique({
+    where: { id: caeId },
+  });
+
+  if (!cae) {
+    throw new Error("Informe CAE no encontrado");
+  }
+
+  if (cae.status_id !== inReviewStatus.id) {
+    throw new Error("El informe CAE no está en revisión");
+  }
+
+  await prisma.infoCAEs.update({
+    where: { id: caeId },
+    data: { status_id: completedStatus.id },
+  });
+
+  console.log(`[CAE] Informe ${caeId} aprobado y marcado como completed`);
+  return cae.id_trayecto;
+}
+
+async function getCAEBalance(conductorId) {
+  const trayectos = await prisma.trayecto.findMany({
+    where: { conductor: conductorId },
+    select: { id: true },
+  });
+  const trayectoIds = trayectos.map((t) => t.id);
+  if (trayectoIds.length === 0) {
+    return {
+      en_revision: 0,
+      disponible: 0,
+      cancelado: 0,
+      total: 0,
+      detalles: [],
+    };
+  }
+
+  const infos = await prisma.infoCAEs.findMany({
+    where: { id_trayecto: { in: trayectoIds } },
+    include: { StatusInfoCAEs: true },
+  });
+
+  let enRevision = 0;
+  let disponible = 0;
+  let cancelado = 0;
+
+  for (const info of infos) {
+    const statusName = info.StatusInfoCAEs?.name ?? "pending";
+    const eur = info.eur_generated ?? 0;
+    if (statusName === "completed") {
+      disponible += eur;
+    } else if (statusName === "canceled") {
+      cancelado += eur;
+    } else {
+      enRevision += eur;
+    }
+  }
+
+  const detalles = infos.map((info) => ({
+    id: info.id,
+    id_trayecto: info.id_trayecto,
+    km_recorridos: info.km_recorridos,
+    km_with_company: info.km_with_company,
+    kwh_generated: info.kwh_generated,
+    eur_generated: info.eur_generated,
+    status: info.StatusInfoCAEs?.name ?? "pending",
+    created_at: info.created_at,
+    updated_at: info.updated_at,
+  }));
+
+  return {
+    en_revision: Math.round(enRevision * 100) / 100,
+    disponible: Math.round(disponible * 100) / 100,
+    cancelado: Math.round(cancelado * 100) / 100,
+    total: Math.round((enRevision + disponible) * 100) / 100,
+    detalles,
+  };
+}
+
+async function listAllCAEs({ status, page = 1, limit = 50 } = {}) {
+  const where = {};
+  if (status) {
+    const statusRecord = await prisma.statusInfoCAEs.findUnique({
+      where: { name: status },
+    });
+    if (statusRecord) {
+      where.status_id = statusRecord.id;
+    }
+  }
+
+  const skip = (page - 1) * limit;
+  const [infos, total] = await Promise.all([
+    prisma.infoCAEs.findMany({
+      where,
+      include: { StatusInfoCAEs: true },
+      orderBy: { created_at: "desc" },
+      skip,
+      take: limit,
+    }),
+    prisma.infoCAEs.count({ where }),
+  ]);
+
+  const trayectoIds = [...new Set(infos.map((i) => i.id_trayecto))];
+  const trayectos = await prisma.trayecto.findMany({
+    where: { id: { in: trayectoIds } },
+    select: {
+      id: true,
+      conductor: true,
+      origen: true,
+      destino: true,
+      hora: true,
+    },
+  });
+  const trayectoMap = new Map(trayectos.map((t) => [t.id, t]));
+
+  const items = infos.map((info) => {
+    const trayecto = trayectoMap.get(info.id_trayecto);
+    return {
+      id: info.id,
+      id_trayecto: info.id_trayecto,
+      conductor: trayecto?.conductor ?? null,
+      origen: trayecto?.origen ?? null,
+      destino: trayecto?.destino ?? null,
+      hora: trayecto?.hora ?? null,
+      km_recorridos: info.km_recorridos,
+      km_with_company: info.km_with_company,
+      kwh_generated: info.kwh_generated,
+      eur_generated: info.eur_generated,
+      status: info.StatusInfoCAEs?.name ?? "pending",
+      created_at: info.created_at,
+      updated_at: info.updated_at,
+    };
+  });
+
+  return { items, total, page, limit };
+}
+
+async function listCAEsByUser(userId) {
+  const trayectos = await prisma.trayecto.findMany({
+    where: { conductor: userId },
+    select: { id: true, origen: true, destino: true, hora: true },
+  });
+  const trayectoIds = trayectos.map((t) => t.id);
+  const trayectoMap = new Map(trayectos.map((t) => [t.id, t]));
+
+  if (trayectoIds.length === 0) {
+    return { items: [], total: 0 };
+  }
+
+  const infos = await prisma.infoCAEs.findMany({
+    where: { id_trayecto: { in: trayectoIds } },
+    include: { StatusInfoCAEs: true },
+    orderBy: { created_at: "desc" },
+  });
+
+  const items = infos.map((info) => {
+    const trayecto = trayectoMap.get(info.id_trayecto);
+    return {
+      id: info.id,
+      id_trayecto: info.id_trayecto,
+      origen: trayecto?.origen ?? null,
+      destino: trayecto?.destino ?? null,
+      hora: trayecto?.hora ?? null,
+      km_recorridos: info.km_recorridos,
+      km_with_company: info.km_with_company,
+      kwh_generated: info.kwh_generated,
+      eur_generated: info.eur_generated,
+      status: info.StatusInfoCAEs?.name ?? "pending",
+      created_at: info.created_at,
+      updated_at: info.updated_at,
+    };
+  });
+
+  return { items, total: items.length };
 }
 
 export const CAEUtils = {
   generateInfoCAE,
+  getCAEBalance,
+  approveCAE,
+  listAllCAEs,
+  listCAEsByUser,
 };
