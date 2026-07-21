@@ -1392,6 +1392,349 @@ GET /api/cae/user/:userId
 
 ---
 
+## Reportes CAE
+
+Los CAEs (Certificados de Ahorro de Emisiones) se generan automáticamente al finalizar un trayecto. Permanecen en estado `pending` hasta que se calculan los km y kWh, pasando a `in_review`. Cuando la energía acumulada supera el umbral (30 MWh por defecto), se pueden agrupar en un **reporte CAE** para enviar al microservicio de usuarios, que generará el Excel para revisión.
+
+### Modelo de datos
+
+#### CAEReport (`cae_reports`)
+
+| Campo        | Tipo     | Descripción                               |
+| ------------ | -------- | ----------------------------------------- |
+| `id`         | UUID     | Identificador único del reporte           |
+| `name`       | String   | Nombre del reporte                        |
+| `status`     | String   | Estado: `draft`, `sent`, `reviewed`       |
+| `total_kwh`  | Float    | Suma de kWh de todos los CAEs del reporte |
+| `total_eur`  | Float    | Suma de euros generados                   |
+| `total_caes` | Int      | Número de CAEs incluidos                  |
+| `file_url`   | String?  | URL del Excel generado (opcional)         |
+| `created_at` | DateTime | Fecha de creación                         |
+| `updated_at` | DateTime | Fecha de actualización                    |
+
+#### InfoCAEs — campo nuevo
+
+| Campo       | Tipo  | Descripción                                         |
+| ----------- | ----- | --------------------------------------------------- |
+| `report_id` | UUID? | ID del reporte al que pertenece (null = no enviado) |
+
+### Endpoints
+
+#### 1. Resumen de reportes CAE
+
+```
+GET /api/cae/reports/summary
+```
+
+**Auth:** Admin requerido
+
+**Descripción:** Devuelve un resumen del estado de todos los CAEs y reportes.
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "caes": {
+    "pendientes_envio": 15,
+    "enviados_sin_aprobar": 8,
+    "completados": 30,
+    "cancelados": 2
+  },
+  "kwh_acumulado_pendiente": 12500.5,
+  "kwh_umbral_envio": 30000,
+  "reportes_creados": 3
+}
+```
+
+#### 2. Listar reportes CAE
+
+```
+GET /api/cae/reports
+```
+
+**Auth:** Admin requerido
+
+**Query params:**
+
+| Parámetro | Tipo   | Descripción                                      |
+| --------- | ------ | ------------------------------------------------ |
+| `status`  | string | Filtrar por estado (`draft`, `sent`, `reviewed`) |
+| `page`    | int    | Página (por defecto 1)                           |
+| `limit`   | int    | Elementos por página (por defecto 50)            |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "items": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Reporte CAE 2026-07",
+      "status": "draft",
+      "total_kwh": 32000,
+      "total_eur": 1280,
+      "total_caes": 45,
+      "file_url": null,
+      "created_at": "2026-07-20T10:00:00.000Z",
+      "updated_at": "2026-07-20T10:00:00.000Z"
+    }
+  ],
+  "total": 3,
+  "page": 1,
+  "limit": 50
+}
+```
+
+#### 3. Crear reporte CAE
+
+```
+POST /api/cae/reports
+```
+
+**Auth:** Admin requerido
+
+**Descripción:** Agrupa todos los CAEs en estado `in_review` sin reporte asignado en un nuevo reporte. Calcula los totales de kWh y euros.
+
+**Body:**
+
+```json
+{
+  "name": "Reporte CAE Julio 2026"
+}
+```
+
+| Campo  | Tipo   | Requerido | Descripción                                             |
+| ------ | ------ | --------- | ------------------------------------------------------- |
+| `name` | string | No        | Nombre del reporte (auto-generado si no se proporciona) |
+
+**Respuesta 201:**
+
+```json
+{
+  "status": "Success",
+  "report": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Reporte CAE Julio 2026",
+    "status": "draft",
+    "total_kwh": 32000,
+    "total_eur": 1280,
+    "total_caes": 45,
+    "created_at": "2026-07-20T10:00:00.000Z"
+  }
+}
+```
+
+**Errores:**
+
+- `400` — No hay CAEs pendientes de reporte.
+- `403` — El usuario no es admin.
+- `500` — Error en el servidor.
+
+#### 4. Obtener datos completos de un reporte (Anexo III)
+
+```
+GET /api/cae/reports/:id
+```
+
+**Auth:** Admin requerido
+
+**Descripción:** Devuelve todos los datos del reporte y de cada CAE incluido, con la información del Anexo III: viajeros, vehículo, trazado GPS, confirmaciones de inicio/fin y verificación de vehículo único. Los datos de conductor, pasajeros y vehículo se obtienen del microservicio de usuarios.
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "reporte": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Reporte CAE Julio 2026",
+    "status": "draft",
+    "total_kwh": 32000,
+    "total_eur": 1280,
+    "total_caes": 45,
+    "file_url": null,
+    "created_at": "2026-07-20T10:00:00.000Z",
+    "updated_at": "2026-07-20T10:00:00.000Z"
+  },
+  "items": [
+    {
+      "cae_id": "660e8400-e29b-41d4-a716-446655440000",
+      "trayecto_id": "770e8400-e29b-41d4-a716-446655440000",
+      "estado": "in_review",
+      "km_recorridos": 120.5,
+      "km_with_company": 118.3,
+      "kwh_generated": 82.81,
+      "eur_generated": 3.31,
+      "viaje": {
+        "origen": "Madrid, Centro",
+        "destino": "Toledo, Casco",
+        "hora_inicio": "2026-07-15T10:00:00.000Z",
+        "origen_coords": { "lat": 40.4168, "lng": -3.7038 },
+        "destino_coords": { "lat": 39.8628, "lng": -4.0273 },
+        "trazado": [
+          { "lat": 40.4168, "lng": -3.7038, "address": "Calle Gran Vía 1", "timestamp": "2026-07-15T10:00:00.000Z" },
+          { "lat": 40.4150, "lng": -3.7100, "address": "Calle Princesa", "timestamp": "2026-07-15T10:05:00.000Z" }
+        ]
+      },
+      "conductor": {
+        "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "nombre": "Juan Pérez",
+        "email": "juan@example.com"
+      },
+      "vehiculo": {
+        "id": "v1e2d3c4-b5a6-7890-abcd-ef1234567890",
+        "matricula": "1234ABC",
+        "marca": "Toyota",
+        "modelo": "Corolla"
+      },
+      "pasajeros": [
+        {
+          "user_id": "b2c3d4e5-f6a7-8901-abcd-ef1234567890",
+          "nombre": "Ana García",
+          "email": "ana@example.com",
+          "confirmacion_inicio": "2026-07-15T10:03:00.000Z",
+          "confirmacion_fin": "2026-07-15T11:30:00.000Z",
+          "inicio_lat": 40.4150,
+          "inicio_lng": -3.7100,
+          "fin_lat": 39.8628,
+          "fin_lng": -4.0273
+        }
+      ],
+      "eventos_trayecto": [
+        {
+          "tipo": "comienzo",
+          "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "id_reserva": null,
+          "lat": 40.4168,
+          "lng": -3.7038,
+          "timestamp": "2026-07-15T10:00:00.000Z"
+        },
+        {
+          "tipo": "recogida",
+          "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "id_reserva": "r1e2d3c4-b5a6-7890-abcd-ef1234567890",
+          "lat": 40.4150,
+          "lng": -3.7100,
+          "timestamp": "2026-07-15T10:03:00.000Z"
+        },
+        {
+          "tipo": "llegada_destino",
+          "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "id_reserva": "r1e2d3c4-b5a6-7890-abcd-ef1234567890",
+          "lat": 39.8628,
+          "lng": -4.0273,
+          "timestamp": "2026-07-15T11:30:00.000Z"
+        },
+        {
+          "tipo": "finalizar",
+          "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "id_reserva": null,
+          "lat": 39.8628,
+          "lng": -4.0273,
+          "timestamp": "2026-07-15T11:35:00.000Z"
+        }
+      ],
+      "verificacion_unico_vehiculo": true
+    }
+  ]
+}
+```
+
+**Datos incluidos del Anexo III:**
+
+- ✅ Listado de viajeros (conductor y pasajeros) con nombre y email
+- ✅ Matrícula, marca y modelo del vehículo
+- ✅ Geolocalización de inicio, trazado y fin del trayecto
+- ✅ Tiempos de inicio y fin
+- ✅ Confirmación activa de inicio y fin por cada pasajero (eventos de recogida y llegada_destino)
+- ✅ Eventos completos del trayecto (comienzo, recogida, llegada_destino, finalizar) con geolocalización y timestamps
+- ✅ Verificación de vehículo único (todos los viajeros en el mismo `vehiculo_id`)
+- ❌ DNI/NIE y teléfono — pendientes del microservicio de usuarios
+
+**Errores:**
+
+- `403` — El usuario no es admin.
+- `404` — Reporte no encontrado.
+- `500` — Error en el servidor.
+
+#### 5. Cambiar estado de un reporte
+
+```
+PATCH /api/cae/reports/:id/status
+```
+
+**Auth:** Admin requerido
+
+**Descripción:** Cambia el estado de un reporte CAE. Los estados válidos son: `draft`, `sent`, `reviewed`.
+
+**Body:**
+
+```json
+{
+  "status": "sent"
+}
+```
+
+| Campo    | Tipo   | Requerido | Descripción                                |
+| -------- | ------ | --------- | ------------------------------------------ |
+| `status` | string | Sí        | Nuevo estado: `draft`, `sent` o `reviewed` |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "report": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Reporte CAE Julio 2026",
+    "status": "sent",
+    "total_kwh": 32000,
+    "total_eur": 1280,
+    "total_caes": 45,
+    "file_url": null,
+    "created_at": "2026-07-20T10:00:00.000Z",
+    "updated_at": "2026-07-21T08:00:00.000Z"
+  }
+}
+```
+
+**Errores:**
+
+- `400` — Estado inválido o campo `status` faltante.
+- `403` — El usuario no es admin.
+- `404` — Reporte no encontrado.
+- `500` — Error en el servidor.
+
+#### 6. Eliminar un reporte
+
+```
+DELETE /api/cae/reports/:id
+```
+
+**Auth:** Admin requerido
+
+**Descripción:** Elimina un reporte CAE. Al eliminarlo, los CAEs asociados se desvinculan (`report_id` se establece a `null`), por lo que vuelven a estar disponibles para incluirse en un nuevo reporte. **No se eliminan los CAEs**, solo la relación con el reporte.
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "deleted": true
+}
+```
+
+**Errores:**
+
+- `403` — El usuario no es admin.
+- `404` — Reporte no encontrado.
+- `500` — Error en el servidor.
+
+---
+
 ## Tramos de ruta
 
 Al crear un trayecto, se generan automáticamente los pasos de la ruta usando **Google Maps Directions API**. Cada paso se guarda en la tabla `tramos` con sus coordenadas y la indicación de la calle/maniobra.

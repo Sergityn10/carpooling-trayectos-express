@@ -323,12 +323,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede ver CAEs de un usuario",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede ver CAEs de un usuario",
+      });
     }
     const { userId } = req.params;
     if (!userId) {
@@ -344,6 +342,233 @@ app.get(
       return res
         .status(500)
         .send({ status: "Error", message: "Error al listar CAEs del usuario" });
+    }
+  },
+);
+
+app.get(
+  "/api/cae/reports/summary",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede ver el resumen de reportes CAE",
+      });
+    }
+    try {
+      const summary = await CAEUtils.getCAEReportSummary();
+      return res.status(200).json({ status: "Success", ...summary });
+    } catch (e) {
+      console.error("[CAE] Error obteniendo resumen de reportes:", e);
+      return res.status(500).send({
+        status: "Error",
+        message: "Error al obtener resumen de reportes CAE",
+      });
+    }
+  },
+);
+
+app.get(
+  "/api/cae/reports",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede listar reportes CAE",
+      });
+    }
+    try {
+      const status = req.query.status || undefined;
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 50;
+      const result = await CAEUtils.listCAEReports({ status, page, limit });
+      return res.status(200).json({ status: "Success", ...result });
+    } catch (e) {
+      console.error("[CAE] Error listando reportes:", e);
+      return res
+        .status(500)
+        .send({ status: "Error", message: "Error al listar reportes CAE" });
+    }
+  },
+);
+
+app.post(
+  "/api/cae/reports",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede crear reportes CAE",
+      });
+    }
+    const { name } = req.body || {};
+    try {
+      const report = await CAEUtils.createCAEReport(name);
+      return res.status(201).json({ status: "Success", report });
+    } catch (e) {
+      console.error("[CAE] Error creando reporte:", e);
+      const status = e.message?.includes("No hay CAEs") ? 400 : 500;
+      return res.status(status).send({
+        status: "Error",
+        message: e.message ?? "Error al crear reporte CAE",
+      });
+    }
+  },
+);
+
+app.get(
+  "/api/cae/reports/export",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede exportar reportes CAE",
+      });
+    }
+    try {
+      const authHeaders = {};
+      const bearerToken = req.headers?.authorization?.startsWith("Bearer ")
+        ? req.headers.authorization.slice("Bearer ".length).trim()
+        : null;
+      if (bearerToken) {
+        authHeaders.Authorization = `Bearer ${bearerToken}`;
+      }
+      const reports = await CAEUtils.listCAEReports({ page: 1, limit: 1000 });
+      const allData = await Promise.all(
+        reports.items.map((r) =>
+          CAEUtils.getCAEReportData(r.id, { headers: authHeaders }).catch(
+            () => null,
+          ),
+        ),
+      );
+      const exportData = allData.filter(Boolean);
+      return res.status(200).json({ status: "Success", reports: exportData });
+    } catch (e) {
+      console.error("[CAE] Error exportando reportes:", e);
+      return res
+        .status(500)
+        .send({ status: "Error", message: "Error al exportar reportes CAE" });
+    }
+  },
+);
+
+app.get(
+  "/api/cae/reports/:id",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede ver reportes CAE",
+      });
+    }
+    const { id } = req.params;
+    if (!id) {
+      return res
+        .status(400)
+        .send({ status: "Error", message: "ID de reporte inválido" });
+    }
+    try {
+      const authHeaders = {};
+      const bearerToken = req.headers?.authorization?.startsWith("Bearer ")
+        ? req.headers.authorization.slice("Bearer ".length).trim()
+        : null;
+      if (bearerToken) {
+        authHeaders.Authorization = `Bearer ${bearerToken}`;
+      }
+      const data = await CAEUtils.getCAEReportData(id, {
+        headers: authHeaders,
+      });
+      return res.status(200).json({ status: "Success", ...data });
+    } catch (e) {
+      console.error("[CAE] Error obteniendo reporte:", e);
+      const status = e.message?.includes("no encontrado") ? 404 : 500;
+      return res.status(status).send({
+        status: "Error",
+        message: e.message ?? "Error al obtener reporte CAE",
+      });
+    }
+  },
+);
+
+app.patch(
+  "/api/cae/reports/:id/status",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res
+        .status(403)
+        .send({
+          status: "Error",
+          message: "Solo un admin puede cambiar el estado de reportes CAE",
+        });
+    }
+    const { id } = req.params;
+    const { status } = req.body || {};
+    if (!id) {
+      return res
+        .status(400)
+        .send({ status: "Error", message: "ID de reporte inválido" });
+    }
+    if (!status) {
+      return res
+        .status(400)
+        .send({ status: "Error", message: "El campo 'status' es requerido" });
+    }
+    try {
+      const report = await CAEUtils.updateCAEReportStatus(id, status);
+      return res.status(200).json({ status: "Success", report });
+    } catch (e) {
+      console.error("[CAE] Error actualizando estado del reporte:", e);
+      const httpStatus = e.message?.includes("no encontrado")
+        ? 404
+        : e.message?.includes("Estado inválido")
+          ? 400
+          : 500;
+      return res
+        .status(httpStatus)
+        .send({
+          status: "Error",
+          message: e.message ?? "Error al actualizar estado del reporte",
+        });
+    }
+  },
+);
+
+app.delete(
+  "/api/cae/reports/:id",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res
+        .status(403)
+        .send({
+          status: "Error",
+          message: "Solo un admin puede eliminar reportes CAE",
+        });
+    }
+    const { id } = req.params;
+    if (!id) {
+      return res
+        .status(400)
+        .send({ status: "Error", message: "ID de reporte inválido" });
+    }
+    try {
+      const result = await CAEUtils.deleteCAEReport(id);
+      return res.status(200).json({ status: "Success", ...result });
+    } catch (e) {
+      console.error("[CAE] Error eliminando reporte:", e);
+      const httpStatus = e.message?.includes("no encontrado") ? 404 : 500;
+      return res
+        .status(httpStatus)
+        .send({
+          status: "Error",
+          message: e.message ?? "Error al eliminar reporte CAE",
+        });
     }
   },
 );

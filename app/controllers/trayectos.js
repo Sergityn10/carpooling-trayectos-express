@@ -1296,6 +1296,14 @@ async function buscarTrayectos(req, res) {
     // 1. OBTENER COORDENADAS DEL USUARIO
     const userOriginCoords = await GoogleMapsProvider.geocodeAddress(o);
     const userDestCoords = await GoogleMapsProvider.geocodeAddress(d);
+    console.log(
+      "[buscarTrayectos] Origen usuario:",
+      JSON.stringify(userOriginCoords),
+    );
+    console.log(
+      "[buscarTrayectos] Destino usuario:",
+      JSON.stringify(userDestCoords),
+    );
 
     // 2. Cálculo de bounding boxes y filtrado compatible con SQLite
     const toRad = (deg) => (deg * Math.PI) / 180;
@@ -1319,6 +1327,18 @@ async function buscarTrayectos(req, res) {
     const destMaxLat = userDestCoords.lat + deltaLatDeg;
     const destMinLng = userDestCoords.lng - deltaLngDegDest;
     const destMaxLng = userDestCoords.lng + deltaLngDegDest;
+    console.log("[buscarTrayectos] Bounding box origen:", {
+      minLat: originMinLat,
+      maxLat: originMaxLat,
+      minLng: originMinLng,
+      maxLng: originMaxLng,
+    });
+    console.log("[buscarTrayectos] Bounding box destino:", {
+      minLat: destMinLat,
+      maxLat: destMaxLat,
+      minLng: destMinLng,
+      maxLng: destMaxLng,
+    });
 
     const rows = await prisma.trayecto.findMany({
       where: {
@@ -1350,6 +1370,22 @@ async function buscarTrayectos(req, res) {
       },
       orderBy: { hora: "asc" },
     });
+    console.log(
+      "[buscarTrayectos] Trayectos candidatos (Prisma):",
+      rows.length,
+    );
+    console.log(
+      "[buscarTrayectos] Detalle candidatos:",
+      rows.map((t) => ({
+        id: t.id,
+        origen: t.origen,
+        destino: t.destino,
+        origen_lat: t.origen_lat,
+        origen_lng: t.origen_lng,
+        destino_lat: t.destino_lat,
+        destino_lng: t.destino_lng,
+      })),
+    );
 
     // Filter by date (YYYY-MM-DD) in JavaScript since Prisma doesn't have DATE() function
     const targetDate = f;
@@ -1357,6 +1393,12 @@ async function buscarTrayectos(req, res) {
       const trayectoDate = new Date(t.hora).toISOString().split("T")[0];
       return trayectoDate === targetDate;
     });
+    console.log(
+      "[buscarTrayectos] Tras filtro de fecha:",
+      dateFiltered.length,
+      "de",
+      rows.length,
+    );
     const haversineKm = (lat1, lon1, lat2, lon2) => {
       const dLat = toRad(lat2 - lat1);
       const dLon = toRad(lon2 - lon1);
@@ -1375,6 +1417,13 @@ async function buscarTrayectos(req, res) {
         where: { id_trayecto: { in: candidateIds } },
         select: { id_trayecto: true, lat: true, lng: true },
       });
+      console.log(
+        "[buscarTrayectos] Tramos recuperados:",
+        tramos.length,
+        "para",
+        candidateIds.length,
+        "trayectos",
+      );
       for (const tramo of tramos) {
         if (!tramosByTrayecto.has(tramo.id_trayecto)) {
           tramosByTrayecto.set(tramo.id_trayecto, []);
@@ -1400,6 +1449,9 @@ async function buscarTrayectos(req, res) {
         );
         // Match if origin and destination are both close
         if (dOrigin <= SEARCH_DISTANCE_KM && dDest <= SEARCH_DISTANCE_KM) {
+          console.log(
+            `[buscarTrayectos] MATCH exacto - trayecto ${t.id}: dOrigin=${dOrigin.toFixed(4)}km dDest=${dDest.toFixed(4)}km`,
+          );
           return true;
         }
         // Also match if any tramo is close to both origin and destination
@@ -1422,10 +1474,15 @@ async function buscarTrayectos(req, res) {
               tr.lng,
             ) <= SEARCH_DISTANCE_KM,
         );
-        return hasOriginMatch && hasDestMatch;
+        const matchByTramo = hasOriginMatch && hasDestMatch;
+        console.log(
+          `[buscarTrayectos] Trayecto ${t.id}: dOrigin=${dOrigin.toFixed(4)}km dDest=${dDest.toFixed(4)}km tramos=${tramos.length} hasOriginMatch=${hasOriginMatch} hasDestMatch=${hasDestMatch} match=${matchByTramo}`,
+        );
+        return matchByTramo;
       });
     }
 
+    console.log("[buscarTrayectos] Resultado final filtrado:", filtered.length);
     const total = filtered.length;
     const totalPages = Math.max(Math.ceil(total / limit), 1);
     const pageSlice = filtered.slice(offset, offset + limit);

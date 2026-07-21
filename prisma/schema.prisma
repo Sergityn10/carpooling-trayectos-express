@@ -239,13 +239,16 @@ model InfoCAEs {
   kwh_generated   Float    @default(0)
   eur_generated   Float    @default(0)
   status_id       Int
+  report_id       String?  @db.VarChar(36)
   created_at      DateTime @default(now())
   updated_at      DateTime @default(now()) @updatedAt
 
   StatusInfoCAEs  StatusInfoCAEs @relation(fields: [status_id], references: [id])
+  CAEReport       CAEReport?     @relation(fields: [report_id], references: [id])
 
   @@index([id_trayecto], name: "idx_infocaes_trayecto")
   @@index([status_id], name: "idx_infocaes_status")
+  @@index([report_id], name: "idx_infocaes_report")
 
   @@map("info_caes")
 }
@@ -258,4 +261,22 @@ model StatusInfoCAEs {
   InfoCAEs    InfoCAEs[]
 
   @@map("status_info_caes")
+}
+
+model CAEReport {
+  id          String   @id @db.VarChar(36)
+  name        String   @db.VarChar(255)
+  status      String   @default("draft") @db.VarChar(20)
+  total_kwh   Float    @default(0)
+  total_eur   Float    @default(0)
+  total_caes  Int      @default(0)
+  file_url    String?  @db.Text
+  created_at  DateTime @default(now())
+  updated_at  DateTime @default(now()) @updatedAt
+
+  InfoCAEs    InfoCAEs[]
+
+  @@index([status], name: "idx_cae_reports_status")
+
+  @@map("cae_reports")
 }
