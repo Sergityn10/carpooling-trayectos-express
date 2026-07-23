@@ -1,7 +1,6 @@
 import { randomUUID } from "crypto";
 import { prisma } from "../database.js";
 import { GoogleMapsProvider } from "../providers/google-maps.js";
-import { OilPriceProvider } from "../providers/precio-oil.js";
 import { TrayectosSchema } from "../schemas/trayecto.js";
 import { DateUtils } from "../utils/date.js";
 import {
@@ -17,6 +16,23 @@ const MESSAGES_URL = process.env.MESSAGES_URL;
 
 const SEARCH_DISTANCE_KM = 0.2; // 200 metros = 0.2 km
 const EARTH_RADIUS_KM = 6371;
+
+const EUR_PER_KM_TRAYECTO = parseFloat(
+  process.env.EUR_PER_KM_TRAYECTO || "0.22",
+);
+const EUR_PER_KM_MIN = 0.2;
+const EUR_PER_KM_MAX = 0.25;
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return EARTH_RADIUS_KM * c;
+}
 
 function getAuthHeaders(req) {
   const authHeader = req.headers?.authorization;
@@ -87,7 +103,7 @@ function parsePreferenceValue(valueType, raw) {
 async function getTrayectos(req, res) {
   try {
     const trayectos = await prisma.trayecto.findMany({
-      where: { NOT: { status: "cancelado" } },
+      where: { status: { notIn: ["finalizado", "en curso", "cancelado"] } },
     });
 
     if (!trayectos || trayectos.length === 0) {
@@ -302,33 +318,49 @@ async function crearTrayecto(req, res) {
 
   if (precio === 0) {
     console.log(
-      "[crearTrayecto] Precio establecido a 0 por el conductor, saltando cálculo de gasoil",
+      "[crearTrayecto] Precio establecido a 0 por el conductor, saltando cálculo",
     );
   } else {
     try {
-      console.log(
-        "[crearTrayecto] Consultando precio gasoil para provincia:",
-        provinceForPricing,
+      const distanceKm = haversineKm(
+        originDetails.lat,
+        originDetails.lng,
+        destinationDetails.lat,
+        destinationDetails.lng,
       );
-      const gasoilPrice =
-        await OilPriceProvider.getGasoilAveragePriceByProvinciaNombre(
-          provinceForPricing,
-        );
-      precio = Math.ceil(gasoilPrice);
       console.log(
-        "[crearTrayecto] Precio gasoil obtenido:",
-        gasoilPrice,
-        "-> precio final:",
+        "[crearTrayecto] Distancia haversine:",
+        distanceKm.toFixed(2),
+        "km",
+      );
+
+      const eurPerKm = Math.min(
+        Math.max(EUR_PER_KM_TRAYECTO, EUR_PER_KM_MIN),
+        EUR_PER_KM_MAX,
+      );
+      console.log(
+        "[crearTrayecto] EUR/km/pasajero:",
+        eurPerKm,
+        `(env=${EUR_PER_KM_TRAYECTO}, min=${EUR_PER_KM_MIN}, max=${EUR_PER_KM_MAX})`,
+      );
+
+      const precioPorPasajero = distanceKm * eurPerKm;
+      precio = Math.round(precioPorPasajero * 100) / 100;
+
+      console.log(
+        "[crearTrayecto] Precio calculado:",
         precio,
+        "€ (",
+        distanceKm.toFixed(2),
+        "km ×",
+        eurPerKm,
+        "€/km)",
       );
     } catch (error) {
-      console.error(
-        "[crearTrayecto] Error al calcular el precio por provincia:",
-        error,
-      );
+      console.error("[crearTrayecto] Error al calcular el precio:", error);
       return res.status(502).send({
         status: "Error",
-        message: "No se pudo calcular el precio del gasoil para el trayecto",
+        message: "No se pudo calcular el precio del trayecto",
       });
     }
   }
@@ -579,7 +611,9 @@ function convertirFechaHoraUTC(fecha, hora) {
 }
 
 async function obtenerTrayectos(req, res) {
-  const rows = await prisma.trayecto.findMany();
+  const rows = await prisma.trayecto.findMany({
+    where: { status: { notIn: ["finalizado", "en curso", "cancelado"] } },
+  });
   const userId = req.user?.id;
 
   // Obtener detalles de conductores (nombre e imagen) desde el microservicio de usuarios
@@ -1343,6 +1377,7 @@ async function buscarTrayectos(req, res) {
     const rows = await prisma.trayecto.findMany({
       where: {
         disponible: { gte: seats },
+        status: { notIn: ["finalizado", "en curso", "cancelado"] },
         OR: [
           {
             origen_lat: { gte: originMinLat, lte: originMaxLat },
@@ -1774,6 +1809,7 @@ async function crearTrayectoEvento(req, res) {
 
 async function obtenerTrayectosPorEvento(req, res) {
   const { eventoId } = req.params;
+  const { direccion } = req.query;
   if (!eventoId) {
     return res.status(400).send({
       status: "Error",
@@ -1782,10 +1818,46 @@ async function obtenerTrayectosPorEvento(req, res) {
   }
 
   try {
-    const rows = await prisma.trayecto.findMany({
-      where: { evento_id: eventoId, NOT: { status: "cancelado" } },
+    const where = {
+      evento_id: eventoId,
+      status: { notIn: ["finalizado", "en curso", "cancelado"] },
+    };
+
+    let eventoLat = null;
+    let eventoLng = null;
+
+    if (direccion === "ida" || direccion === "vuelta") {
+      const { headers } = getAuthHeaders(req);
+      const eventoInfo = await UsersAPI.fetchEventoInfo(eventoId, { headers });
+      if (
+        eventoInfo?.event?.latitude != null &&
+        eventoInfo?.event?.longitude != null
+      ) {
+        eventoLat = parseFloat(eventoInfo.event.latitude);
+        eventoLng = parseFloat(eventoInfo.event.longitude);
+      }
+    }
+
+    let rows = await prisma.trayecto.findMany({
+      where,
       orderBy: { hora: "asc" },
     });
+
+    if (direccion === "ida" && eventoLat != null) {
+      rows = rows.filter(
+        (t) =>
+          t.destino_lat != null &&
+          Math.abs(t.destino_lat - eventoLat) < 0.0001 &&
+          Math.abs(t.destino_lng - eventoLng) < 0.0001,
+      );
+    } else if (direccion === "vuelta" && eventoLat != null) {
+      rows = rows.filter(
+        (t) =>
+          t.origen_lat != null &&
+          Math.abs(t.origen_lat - eventoLat) < 0.0001 &&
+          Math.abs(t.origen_lng - eventoLng) < 0.0001,
+      );
+    }
 
     const conductorIds = [...new Set(rows.map((t) => String(t.conductor)))];
     const usersList = await UsersAPI.fetchUsersByIds(conductorIds);

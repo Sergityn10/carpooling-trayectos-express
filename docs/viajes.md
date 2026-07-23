@@ -757,13 +757,19 @@ GET /api/trayecto/evento/:eventoId
 
 **Autenticación:** Opcional (`tryAuthenticate`)
 
-**Descripción:** Devuelve todos los trayectos asociados a un evento específico (mediante el campo `evento_id`), excluyendo los cancelados. Ordenados por hora ascendente. Incluye nombre e imagen del conductor obtenidos del microservicio de usuarios, y si el usuario autenticado ha valorado cada trayecto.
+**Descripción:** Devuelve todos los trayectos asociados a un evento específico (mediante el campo `evento_id`), excluyendo los finalizados, en curso y cancelados. Ordenados por hora ascendente. Incluye nombre e imagen del conductor obtenidos del microservicio de usuarios, y si el usuario autenticado ha valorado cada trayecto.
 
 **Path params:**
 
 | Parámetro  | Tipo          | Descripción   |
 | ---------- | ------------- | ------------- |
 | `eventoId` | string (UUID) | ID del evento |
+
+**Query params:**
+
+| Parámetro   | Tipo   | Descripción                                                                                                              |
+| ----------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `direccion` | string | Filtra por tipo de trayecto: `ida` (destino = evento) o `vuelta` (origen = evento). Si no se especifica, devuelve todos. |
 
 **Respuesta 200:**
 
