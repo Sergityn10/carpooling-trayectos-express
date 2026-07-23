@@ -1,4 +1,4 @@
-import { database } from "../database.js";
+import { prisma } from "../database.js";
 import { PreferencesSchema } from "../schemas/preferences.js";
 
 function parseEnumValues(enumValues) {
@@ -72,12 +72,12 @@ function parsePreferenceValue(valueType, raw) {
 
 async function getDefinitions(req, res) {
   try {
-    const connection = await database.getConnection();
-    const [rows] = await connection.query(
-      "SELECT pref_key, value_type, default_value, enum_values, description, is_active FROM preference_definitions WHERE is_active = 1 ORDER BY pref_key",
-    );
+    const rows = await prisma.preferenceDefinition.findMany({
+      where: { is_active: 1 },
+      orderBy: { pref_key: "asc" },
+    });
 
-    const definitions = (rows ?? []).map((r) => ({
+    const definitions = rows.map((r) => ({
       pref_key: r.pref_key,
       value_type: r.value_type,
       default_value: parsePreferenceValue(r.value_type, r.default_value),
@@ -103,15 +103,21 @@ async function getMyPreferences(req, res) {
   }
 
   try {
-    const connection = await database.getConnection();
-    const [rows] = await connection.query(
-      "SELECT d.pref_key, d.value_type, COALESCE(u.value, d.default_value) AS value, d.enum_values, d.description FROM preference_definitions d LEFT JOIN user_preferences u ON u.pref_key = d.pref_key AND u.user_id = ? WHERE d.is_active = 1 ORDER BY d.pref_key",
-      [userId],
-    );
+    const defs = await prisma.preferenceDefinition.findMany({
+      where: { is_active: 1 },
+      orderBy: { pref_key: "asc" },
+    });
+    const userPrefs = await prisma.userPreference.findMany({
+      where: { user_id: userId },
+    });
+    const userPrefsMap = new Map(userPrefs.map((p) => [p.pref_key, p.value]));
 
     const preferences = {};
-    for (const r of rows ?? []) {
-      preferences[r.pref_key] = parsePreferenceValue(r.value_type, r.value);
+    for (const d of defs) {
+      const rawValue = userPrefsMap.has(d.pref_key)
+        ? userPrefsMap.get(d.pref_key)
+        : d.default_value;
+      preferences[d.pref_key] = parsePreferenceValue(d.value_type, rawValue);
     }
 
     return res.status(200).send({ status: "Success", userId, preferences });
@@ -198,17 +204,12 @@ async function updateMyPreferences(req, res) {
     });
   }
 
-  const connection = await database.getConnection();
-
   try {
-    let transactionStarted = false;
-    const placeholders = keys.map(() => "?").join(",");
-    const [defs] = await connection.query(
-      `SELECT pref_key, value_type, enum_values FROM preference_definitions WHERE is_active = 1 AND pref_key IN (${placeholders})`,
-      keys,
-    );
+    const defs = await prisma.preferenceDefinition.findMany({
+      where: { is_active: 1, pref_key: { in: keys } },
+    });
 
-    const defsByKey = new Map((defs ?? []).map((d) => [d.pref_key, d]));
+    const defsByKey = new Map(defs.map((d) => [d.pref_key, d]));
     const missing = keys.filter((k) => !defsByKey.has(k));
     if (missing.length > 0) {
       return res.status(400).send({
@@ -217,75 +218,51 @@ async function updateMyPreferences(req, res) {
       });
     }
 
-    await connection.query("START TRANSACTION");
-    transactionStarted = true;
+    await prisma.$transaction(async (tx) => {
+      for (const prefKey of keys) {
+        const def = defsByKey.get(prefKey);
+        const valueType = def.value_type;
+        const enumValues = parseEnumValues(def.enum_values);
+        const incoming = updates[prefKey];
 
-    for (const prefKey of keys) {
-      const def = defsByKey.get(prefKey);
-      const valueType = def.value_type;
-      const enumValues = parseEnumValues(def.enum_values);
-      const incoming = updates[prefKey];
+        if (incoming === null) {
+          await tx.userPreference.deleteMany({
+            where: { user_id: userId, pref_key: prefKey },
+          });
+          continue;
+        }
 
-      if (incoming === null) {
-        await connection.query(
-          "DELETE FROM user_preferences WHERE user_id = ? AND pref_key = ?",
-          [userId, prefKey],
-        );
-        continue;
+        const storedValue = stringifyPreferenceValue(valueType, incoming);
+        if (
+          valueType === "enum" &&
+          enumValues &&
+          !enumValues.includes(storedValue)
+        ) {
+          throw new Error(
+            `Valor inválido para ${prefKey}. Valores permitidos: ${enumValues.join(", ")}`,
+          );
+        }
+
+        await tx.userPreference.upsert({
+          where: {
+            user_id_pref_key: { user_id: userId, pref_key: prefKey },
+          },
+          update: { value: storedValue, updated_at: new Date() },
+          create: {
+            user_id: userId,
+            pref_key: prefKey,
+            value: storedValue,
+            updated_at: new Date(),
+          },
+        });
       }
-
-      const storedValue = stringifyPreferenceValue(valueType, incoming);
-      if (
-        valueType === "enum" &&
-        enumValues &&
-        !enumValues.includes(storedValue)
-      ) {
-        throw new Error(
-          `Valor inválido para ${prefKey}. Valores permitidos: ${enumValues.join(", ")}`,
-        );
-      }
-
-      await connection.query(
-        "INSERT INTO user_preferences (user_id, pref_key, value, updated_at) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = NOW()",
-        [userId, prefKey, storedValue],
-      );
-    }
-
-    try {
-      await connection.query("COMMIT");
-    } catch (commitError) {
-      const msg = String(commitError?.message ?? "");
-      if (!msg.includes("no transaction is active")) {
-        throw commitError;
-      }
-      console.error(
-        "Error en updateMyPreferences (during commit):",
-        commitError,
-      );
-    }
+    });
 
     return res.status(200).send({
       status: "Success",
       message: "Se ha actualizado correctamente las preferencias de usuario",
     });
   } catch (error) {
-    const msg = String(error?.message ?? "");
-    if (msg.includes("no transaction is active")) {
-      console.error("Error en updateMyPreferences (during commit):", error);
-
-      return res.status(200).send({
-        status: "Success",
-        message: "Se ha actualizado correctamente las preferencias de usuario",
-      });
-    }
-
-    try {
-      if (typeof transactionStarted !== "undefined" && transactionStarted) {
-        await connection.query("ROLLBACK");
-      }
-    } catch (rollbackError) {
-      console.error("Error during rollback:", rollbackError);
-    }
     console.error("Error en updateMyPreferences:", error);
 
     return res.status(400).send({
@@ -296,36 +273,36 @@ async function updateMyPreferences(req, res) {
 }
 async function insertDefaultUserPreferences(req, res) {
   const userId = req.user?.userId;
-  const userIdParam = req.params.userId;
   if (!userId) {
     return res.status(401).send({ status: "Error", message: "No autenticado" });
   }
   try {
-    const connection = await database.getConnection();
-    await connection.query("START TRANSACTION");
-    // Get all active preference definitions
-    const [definitions] = await connection.query(
-      "SELECT pref_key, default_value FROM preference_definitions WHERE is_active = 1",
-    );
-    // Insert default preferences for the user
-    for (const def of definitions) {
-      await connection.query(
-        `INSERT IGNORE INTO user_preferences (user_id, pref_key, value, updated_at)
-         VALUES (?, ?, ?, NOW())`,
-        [userId, def.pref_key, def.default_value],
-      );
-    }
-    await connection.query("COMMIT");
+    const definitions = await prisma.preferenceDefinition.findMany({
+      where: { is_active: 1 },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      for (const def of definitions) {
+        await tx.userPreference.upsert({
+          where: {
+            user_id_pref_key: { user_id: userId, pref_key: def.pref_key },
+          },
+          update: {},
+          create: {
+            user_id: userId,
+            pref_key: def.pref_key,
+            value: def.default_value,
+            updated_at: new Date(),
+          },
+        });
+      }
+    });
+
     return res.status(201).send({
       status: "Success",
       message: "Preferencias por defecto insertadas correctamente",
     });
   } catch (error) {
-    try {
-      await connection.query("ROLLBACK");
-    } catch (rollbackError) {
-      console.error("Error en rollback:", rollbackError);
-    }
     console.error("Error en insertDefaultUserPreferences:", error);
     return res.status(500).send({
       status: "Error",
