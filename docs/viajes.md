@@ -33,9 +33,7 @@ GET /api/trayecto
       "conductor": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "disponible": 3,
       "precio": 15,
-      "origen_lat": 40.4168,
-      "origen_lng": -3.7038,
-      "destino_lat": 39.8628,
+      "precio_conductor": 11.00,
       "destino_lng": -4.0273,
       "routeIndex": null,
       "status": "pendiente",
@@ -87,9 +85,7 @@ GET /api/trayecto/search
       "img_perfil": "https://...",
       "disponible": 3,
       "precio": 15,
-      "origen_lat": 40.4168,
-      "origen_lng": -3.7038,
-      "destino_lat": 39.8628,
+      "precio_conductor": 11.00,
       "destino_lng": -4.0273,
       "valorado": false
     }
@@ -139,6 +135,7 @@ GET /api/trayecto/mis-trayectos
     "img_perfil": "https://...",
     "disponible": 3,
     "precio": 15,
+    "precio_conductor": 11.00,
     "valorado": false
   }
 ]
@@ -171,6 +168,7 @@ GET /api/trayecto/proximos
     "img_perfil": "https://...",
     "disponible": 3,
     "precio": 15,
+    "precio_conductor": 11.00,
     "valorado": false
   }
 ]
@@ -208,6 +206,7 @@ GET /api/trayecto/:id
   "img_perfil": "https://...",
   "disponible": 3,
   "precio": 15,
+  "precio_conductor": 11.00,
   "fecha": "Wed Jan 15 2025",
   "valorado": false,
   "driverPreferences": {
@@ -231,7 +230,15 @@ POST /api/trayecto
 
 **Autenticación:** Requerida (`authenticate`)
 
-**Descripción:** Crea un nuevo trayecto. Geocodifica origen y destino con Google Maps, calcula automáticamente el precio según el precio medio del gasoil de la provincia, genera los **tramos** (pasos de la ruta) mediante Google Maps Directions y los guarda en la tabla `tramos`, y crea un chat asociado al trayecto en el microservicio de mensajes.
+**Descripción:** Crea un nuevo trayecto. Geocodifica origen y destino con Google Maps, **verifica** que el precio establecido por el conductor esté dentro del rango aceptable según la distancia (fórmula haversine × €/km), añade comisión de plataforma (15%) y tarifas de Stripe usando la fórmula `T = (P + S_f) / (1 - S_% - comisión)`, genera los **tramos** (pasos de la ruta) mediante Google Maps Directions y los guarda en la tabla `tramos`, y crea un chat asociado al trayecto en el microservicio de mensajes.
+
+**Modelo de precios:**
+
+- `precio_conductor`: Precio neto del conductor = el precio enviado por el conductor (verificado contra el rango aceptable)
+- `precio`: Precio total al pasajero = `(precio_conductor + STRIPE_FIXED_FEE) / (1 - STRIPE_PERCENT - PLATFORM_COMMISSION_PERCENT)`
+- **Verificación de precio**: El precio del conductor debe estar entre `distancia_km × EUR_PER_KM_MIN` y `distancia_km × EUR_PER_KM_MAX`. Si está fuera del rango, se devuelve error 400.
+- Variables configurables en `.env`: `EUR_PER_KM_TRAYECTO` (0.06), `EUR_PER_KM_MIN` (0.06), `EUR_PER_KM_MAX` (0.08), `STRIPE_PERCENT`, `STRIPE_FIXED_FEE`, `PLATFORM_COMMISSION_PERCENT`
+- Si `precio === 0`, el conductor ofrece el viaje gratis (sin verificación)
 
 **Body (JSON):**
 
@@ -250,18 +257,19 @@ POST /api/trayecto
 }
 ```
 
-| Campo        | Tipo          | Requerido | Validación                                                 |
-| ------------ | ------------- | --------- | ---------------------------------------------------------- |
-| `origen`     | string        | Sí        | min 2, max 100                                             |
-| `destino`    | string        | Sí        | min 2, max 100                                             |
-| `fecha`      | string        | Sí        | Formato `YYYY-MM-DD`                                       |
-| `hora`       | string        | Sí        | Formato `HH:MM` (24h)                                      |
-| `plazas`     | number        | Sí        | 1–7                                                        |
-| `conductor`  | string (UUID) | Sí        | UUID del conductor (si no se envía, usa `req.user.userId`) |
-| `disponible` | number        | No        | 0–7 (por defecto = `plazas`)                               |
-| `precio`     | number        | Sí        | >= 0 (se sobrescribe con cálculo automático)               |
-| `routeIndex` | number        | No        | Int                                                        |
-| `evento_id`  | string (UUID) | No        | UUID del evento asociado (para búsqueda rápida por evento) |
+| Campo              | Tipo          | Requerido | Validación                                                 |
+| ------------------ | ------------- | --------- | ---------------------------------------------------------- |
+| `origen`           | string        | Sí        | min 2, max 100                                             |
+| `destino`          | string        | Sí        | min 2, max 100                                             |
+| `fecha`            | string        | Sí        | Formato `YYYY-MM-DD`                                       |
+| `hora`             | string        | Sí        | Formato `HH:MM` (24h)                                      |
+| `plazas`           | number        | Sí        | 1–7                                                        |
+| `conductor`        | string (UUID) | Sí        | UUID del conductor (si no se envía, usa `req.user.userId`) |
+| `disponible`       | number        | No        | 0–7 (por defecto = `plazas`)                               |
+| `precio`           | number        | Sí        | >= 0 (verificado contra rango distancia × €/km)            |
+| `precio_conductor` | number        | No        | Guardado automáticamente (= `precio` del conductor)        |
+| `routeIndex`       | number        | No        | Int                                                        |
+| `evento_id`        | string (UUID) | No        | UUID del evento asociado (para búsqueda rápida por evento) |
 
 **Respuesta 201:**
 
@@ -278,6 +286,7 @@ POST /api/trayecto
     "plazas": 4,
     "conductor": "Juan Pérez",
     "conductor_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "precio_conductor": 11.00,
     "precio": 15
   }
 }
@@ -287,7 +296,7 @@ POST /api/trayecto
 
 - `400` — Fecha inválida, conductor no existe, o ya existe un trayecto con la misma fecha y hora.
 - `404` — No se pudo determinar la provincia para calcular el precio.
-- `502` — No se pudo calcular el precio del gasoil o error al crear el chat.
+- `502` — No se pudo calcular el precio o error al crear el chat.
 
 ---
 
@@ -672,7 +681,7 @@ POST /api/trayecto/evento
 - **Trayecto de ida:** El conductor envía `origen` (su punto de partida). El destino se establece automáticamente como la ubicación del evento.
 - **Trayecto de vuelta:** El conductor envía `destino` (su punto de llegada). El origen se establece automáticamente como la ubicación del evento.
 
-Es obligatorio enviar **uno de los dos** (`origen` o `destino`), pero no ambos. Las coordenadas del evento se pasan directamente al trayecto sin geocodificación redundante. El resto del proceso es idéntico al de crear un trayecto normal: geocodificación del punto del usuario, cálculo automático del precio según la provincia y creación del chat asociado.
+Es obligatorio enviar **uno de los dos** (`origen` o `destino`), pero no ambos. Las coordenadas del evento se pasan directamente al trayecto sin geocodificación redundante. El resto del proceso es idéntico al de crear un trayecto normal: geocodificación del punto del usuario, verificación del precio según la distancia y creación del chat asociado.
 
 **Body (JSON) — Trayecto de ida:**
 
@@ -716,7 +725,7 @@ Es obligatorio enviar **uno de los dos** (`origen` o `destino`), pero no ambos. 
 | `plazas`     | number        | Sí          | 1–7                                                        |
 | `conductor`  | string (UUID) | Sí          | UUID del conductor (si no se envía, usa `req.user.userId`) |
 | `disponible` | number        | No          | 0–7 (por defecto = `plazas`)                               |
-| `precio`     | number        | Sí          | >= 0 (se sobrescribe con cálculo automático)               |
+| `precio`     | number        | Sí          | >= 0 (verificado contra rango distancia × €/km)            |
 | `routeIndex` | number        | No          | Int                                                        |
 
 > **Nota:** El punto no enviado (`origen` o `destino`) se obtiene automáticamente desde las coordenadas del evento en el microservicio de usuarios. El campo `evento_id` se almacena en el trayecto para permitir búsquedas rápidas.
@@ -736,6 +745,7 @@ Es obligatorio enviar **uno de los dos** (`origen` o `destino`), pero no ambos. 
     "plazas": 4,
     "conductor": "Juan Pérez",
     "conductor_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "precio_conductor": 11.00,
     "precio": 15
   }
 }
@@ -745,7 +755,7 @@ Es obligatorio enviar **uno de los dos** (`origen` o `destino`), pero no ambos. 
 
 - `400` — `evento_id` faltante, ni `origen` ni `destino` enviados, fecha inválida, conductor no existe, o el evento no tiene una ubicación válida.
 - `404` — No se pudo obtener la información del evento desde el microservicio de usuarios.
-- `502` — No se pudo calcular el precio del gasoil o error al crear el chat.
+- `502` — No se pudo calcular el precio o error al crear el chat.
 
 ---
 
@@ -789,6 +799,7 @@ GET /api/trayecto/evento/:eventoId
       "img_perfil": "https://...",
       "disponible": 3,
       "precio": 15,
+      "precio_conductor": 11.00,
       "evento_id": "f1e2d3c4-b5a6-7890-abcd-ef1234567890",
       "valorado": false
     }

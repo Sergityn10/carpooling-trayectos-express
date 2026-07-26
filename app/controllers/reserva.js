@@ -13,6 +13,10 @@ let frontend_url = process.env.FRONTEND_URL;
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
+const PLATFORM_COMMISSION_PERCENT = parseFloat(
+  process.env.PLATFORM_COMMISSION_PERCENT || "0.15",
+);
+
 async function getRatedTrayectoIdsForUser(userId, trayectoIds) {
   if (!userId) return new Set();
   const ids = (trayectoIds ?? [])
@@ -192,7 +196,7 @@ async function addReserva(req, res) {
     where: { id: trayecto_id },
     select: {
       disponible: true,
-      precio: true,
+      precio_conductor: true,
       origen: true,
       conductor: true,
       destino: true,
@@ -206,7 +210,7 @@ async function addReserva(req, res) {
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
 
-  const isFree = Number(trayecto.precio) === 0;
+  const isFree = Number(trayecto.precio_conductor) === 0;
 
   // Obtener el nombre del conductor desde el microservicio de usuarios
   const conductorInfo = await UsersAPI.fetchUserPublicInfo(
@@ -309,7 +313,9 @@ async function addReserva(req, res) {
   // Crear la sesión de pago en Stripe (solo si el trayecto no es gratuito)
   let checkout_session = null;
   if (!isFree) {
-    let totalAmount = trayecto.precio * 100;
+    const comision = trayecto.precio_conductor * PLATFORM_COMMISSION_PERCENT;
+    const netoConComision = trayecto.precio_conductor + comision;
+    let totalAmount = Math.round(netoConComision * 100);
     try {
       checkout_session = await fetch(
         `${USUARIOS_URL}/api/payment/payment-intent/checkout`,
@@ -1011,7 +1017,7 @@ async function retomarPagoReserva(req, res) {
       Trayecto: {
         select: {
           conductor: true,
-          precio: true,
+          precio_conductor: true,
           origen: true,
           destino: true,
           status: true,
@@ -1041,7 +1047,7 @@ async function retomarPagoReserva(req, res) {
   }
 
   const trayecto = reserva.Trayecto;
-  const isFree = Number(trayecto.precio) === 0;
+  const isFree = Number(trayecto.precio_conductor) === 0;
   if (isFree) {
     return res.status(400).send({
       status: "Error",
@@ -1058,7 +1064,10 @@ async function retomarPagoReserva(req, res) {
   }
 
   const cookieHeaderValue = `access_token=${token}`;
-  let totalAmount = trayecto.precio * 100;
+  const comisionRetomar =
+    trayecto.precio_conductor * PLATFORM_COMMISSION_PERCENT;
+  const netoConComisionRetomar = trayecto.precio_conductor + comisionRetomar;
+  let totalAmount = Math.round(netoConComisionRetomar * 100);
 
   let checkout_session = null;
   let usedFallback = false;
@@ -1248,7 +1257,7 @@ async function reservaQR(req, res) {
       id: true,
       conductor: true,
       disponible: true,
-      precio: true,
+      precio_conductor: true,
       status: true,
       origen: true,
       destino: true,
@@ -1283,7 +1292,7 @@ async function reservaQR(req, res) {
     },
   });
 
-  const isFree = Number(trayecto.precio) === 0;
+  const isFree = Number(trayecto.precio_conductor) === 0;
   const { token, headers } = getAuthHeaders(req);
   const cookieHeaderValue = `access_token=${token}`;
 
@@ -1300,7 +1309,10 @@ async function reservaQR(req, res) {
       });
     }
 
-    const totalAmount = Math.round(Number(trayecto.precio) * 100);
+    const comision =
+      Number(trayecto.precio_conductor) * PLATFORM_COMMISSION_PERCENT;
+    const netoConComision = Number(trayecto.precio_conductor) + comision;
+    const totalAmount = Math.round(netoConComision * 100);
 
     try {
       checkoutSession = await fetch(

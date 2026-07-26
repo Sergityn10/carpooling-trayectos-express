@@ -13,6 +13,7 @@ import dotenv from "dotenv";
 
 dotenv.config();
 const MESSAGES_URL = process.env.MESSAGES_URL;
+const USUARIOS_URL = process.env.USUARIOS_URL;
 
 const SEARCH_DISTANCE_KM = 0.2; // 200 metros = 0.2 km
 const EARTH_RADIUS_KM = 6371;
@@ -20,8 +21,30 @@ const EARTH_RADIUS_KM = 6371;
 const EUR_PER_KM_TRAYECTO = parseFloat(
   process.env.EUR_PER_KM_TRAYECTO || "0.22",
 );
-const EUR_PER_KM_MIN = 0.2;
-const EUR_PER_KM_MAX = 0.25;
+const EUR_PER_KM_MIN = 0.06;
+const EUR_PER_KM_MAX = 0.08;
+
+const STRIPE_PERCENT = parseFloat(process.env.STRIPE_PERCENT || "0.015");
+const STRIPE_FIXED_FEE = parseFloat(process.env.STRIPE_FIXED_FEE || "0.25");
+const PLATFORM_COMMISSION_PERCENT = parseFloat(
+  process.env.PLATFORM_COMMISSION_PERCENT || "0.15",
+);
+
+async function cotizarPrecio(precioConductor) {
+  if (precioConductor === 0) return 0;
+  const comision = precioConductor * PLATFORM_COMMISSION_PERCENT;
+  const netoConComision = precioConductor + comision;
+  const netoCents = Math.round(netoConComision * 100);
+  const response = await fetch(
+    `${USUARIOS_URL}/api/payment/cotizar?neto=${netoCents}`,
+  );
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => null);
+    throw new Error(errBody?.message ?? "Error al cotizar el precio");
+  }
+  const data = await response.json();
+  return data.total_eur;
+}
 
 function haversineKm(lat1, lng1, lat2, lng2) {
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -316,9 +339,11 @@ async function crearTrayecto(req, res) {
     });
   }
 
+  let precioConductor = 0;
+
   if (precio === 0) {
     console.log(
-      "[crearTrayecto] Precio establecido a 0 por el conductor, saltando cálculo",
+      "[crearTrayecto] Precio establecido a 0 por el conductor, saltando verificación",
     );
   } else {
     try {
@@ -338,29 +363,55 @@ async function crearTrayecto(req, res) {
         Math.max(EUR_PER_KM_TRAYECTO, EUR_PER_KM_MIN),
         EUR_PER_KM_MAX,
       );
-      console.log(
-        "[crearTrayecto] EUR/km/pasajero:",
-        eurPerKm,
-        `(env=${EUR_PER_KM_TRAYECTO}, min=${EUR_PER_KM_MIN}, max=${EUR_PER_KM_MAX})`,
-      );
 
-      const precioPorPasajero = distanceKm * eurPerKm;
-      precio = Math.round(precioPorPasajero * 100) / 100;
+      const precioMinEsperado =
+        Math.round(distanceKm * EUR_PER_KM_MIN * 100) / 100;
+      const precioMaxEsperado =
+        Math.round(distanceKm * EUR_PER_KM_MAX * 100) / 100;
 
       console.log(
-        "[crearTrayecto] Precio calculado:",
+        "[crearTrayecto] Verificando precio del conductor:",
         precio,
+        "€ | Rango aceptable:",
+        precioMinEsperado,
+        "-",
+        precioMaxEsperado,
         "€ (",
         distanceKm.toFixed(2),
         "km ×",
-        eurPerKm,
+        EUR_PER_KM_MIN,
+        "-",
+        EUR_PER_KM_MAX,
         "€/km)",
       );
+
+      if (precio < precioMinEsperado || precio > precioMaxEsperado) {
+        return res.status(400).send({
+          status: "Error",
+          message: `El precio ${precio}€ no es válido para un trayecto de ${distanceKm.toFixed(2)} km. Precio aceptable entre ${precioMinEsperado}€ y ${precioMaxEsperado}€ (basado en ${EUR_PER_KM_MIN}€- ${EUR_PER_KM_MAX}€/km).`,
+        });
+      }
+
+      precioConductor = precio;
+      precio = await cotizarPrecio(precioConductor);
+
+      const comision =
+        Math.round(precioConductor * PLATFORM_COMMISSION_PERCENT * 100) / 100;
+
+      console.log(
+        "[crearTrayecto] Precio conductor (verificado):",
+        precioConductor,
+        "€ | Precio pasajero (cotizado):",
+        precio,
+        "€ | Comisión plataforma:",
+        comision,
+        "€",
+      );
     } catch (error) {
-      console.error("[crearTrayecto] Error al calcular el precio:", error);
+      console.error("[crearTrayecto] Error al verificar el precio:", error);
       return res.status(502).send({
         status: "Error",
-        message: "No se pudo calcular el precio del trayecto",
+        message: "No se pudo verificar el precio del trayecto",
       });
     }
   }
@@ -391,6 +442,7 @@ async function crearTrayecto(req, res) {
         vehiculo_id,
         disponible,
         precio,
+        precio_conductor: precioConductor,
         status: estadoInicial,
         origen_lat: originDetails.lat,
         origen_lng: originDetails.lng,
@@ -470,6 +522,7 @@ async function crearTrayecto(req, res) {
     conductor: conductorName,
     conductor_id,
     vehiculo_id,
+    precio_conductor: precioConductor,
     precio,
   };
 
@@ -1252,8 +1305,37 @@ async function patchTrayecto(req, res) {
   updateData.plazas = plazas;
   updateData.conductor = conductor;
   updateData.vehiculo_id = vehiculo_id;
-  updateData.precio = precio;
   updateData.routeIndex = routeIndex;
+
+  if (precio === 0) {
+    updateData.precio = 0;
+    updateData.precio_conductor = 0;
+  } else {
+    const lat1 = updateData.origen_lat ?? original.origen_lat;
+    const lng1 = updateData.origen_lng ?? original.origen_lng;
+    const lat2 = updateData.destino_lat ?? original.destino_lat;
+    const lng2 = updateData.destino_lng ?? original.destino_lng;
+
+    if (lat1 != null && lng1 != null && lat2 != null && lng2 != null) {
+      const distanceKm = haversineKm(lat1, lng1, lat2, lng2);
+      const precioMinEsperado =
+        Math.round(distanceKm * EUR_PER_KM_MIN * 100) / 100;
+      const precioMaxEsperado =
+        Math.round(distanceKm * EUR_PER_KM_MAX * 100) / 100;
+
+      if (precio < precioMinEsperado || precio > precioMaxEsperado) {
+        return res.status(400).send({
+          status: "Error",
+          message: `El precio ${precio}€ no es válido para un trayecto de ${distanceKm.toFixed(2)} km. Precio aceptable entre ${precioMinEsperado}€ y ${precioMaxEsperado}€ (basado en ${EUR_PER_KM_MIN}€- ${EUR_PER_KM_MAX}€/km).`,
+        });
+      }
+
+      updateData.precio_conductor = precio;
+      updateData.precio = await cotizarPrecio(precio);
+    } else {
+      updateData.precio = precio;
+    }
+  }
 
   await prisma.trayecto.update({
     where: { id },
@@ -1268,16 +1350,30 @@ async function patchTrayecto(req, res) {
 async function eliminarTrayecto(req, res) {
   const { id } = req.params;
   try {
-    await prisma.trayecto.delete({ where: { id } });
+    await prisma.$transaction([
+      prisma.tramo.deleteMany({ where: { id_trayecto: id } }),
+      prisma.recorrido.deleteMany({ where: { id_trayecto: id } }),
+      prisma.eventoTrayecto.deleteMany({ where: { id_trayecto: id } }),
+      prisma.comment.deleteMany({ where: { id_trayecto: id } }),
+      prisma.infoCAEs.deleteMany({ where: { id_trayecto: id } }),
+      prisma.pago.deleteMany({ where: { id_trayecto: id } }),
+      prisma.reserva.deleteMany({ where: { id_trayecto: id } }),
+      prisma.trayecto.delete({ where: { id } }),
+    ]);
   } catch (error) {
     if (error.code === "P2025") {
       return res
         .status(404)
         .send({ status: "Error", message: "Trayecto no encontrado" });
     }
-    throw error;
+    console.error("Error en eliminarTrayecto:", error);
+    return res
+      .status(500)
+      .send({ status: "Error", message: "Error al eliminar el trayecto" });
   }
-  return res.sendStatus(204);
+  return res
+    .status(200)
+    .json({ status: "Success", message: "Trayecto eliminado correctamente" });
 }
 
 async function buscarTrayectos(req, res) {
