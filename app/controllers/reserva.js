@@ -1178,6 +1178,121 @@ async function retomarPagoReserva(req, res) {
   });
 }
 
+async function capturarPagosTrayecto(trayectoId) {
+  if (!trayectoId) return { captured: 0, errors: [] };
+  console.log(
+    "[capturarPagosTrayecto] Iniciando captura para trayecto:",
+    trayectoId,
+  );
+
+  const reservas = await prisma.reserva.findMany({
+    where: {
+      id_trayecto: trayectoId,
+      status: "completed",
+      trip_outcome: "pending",
+      stripe_checkout_session_id: { not: null },
+    },
+  });
+
+  console.log(
+    "[capturarPagosTrayecto] Reservas pendientes de captura:",
+    reservas.length,
+  );
+
+  let captured = 0;
+  const errors = [];
+
+  for (const reserva of reservas) {
+    try {
+      let paymentIntentId = reserva.stripe_payment_intent_id;
+
+      if (!paymentIntentId && reserva.stripe_checkout_session_id) {
+        const pago = await prisma.pago.findFirst({
+          where: {
+            stripe_checkout_session_id: reserva.stripe_checkout_session_id,
+            NOT: { stripe_payment_intent_id: null },
+          },
+          orderBy: { id: "desc" },
+        });
+        paymentIntentId = pago?.stripe_payment_intent_id ?? null;
+        if (paymentIntentId) {
+          await prisma.reserva.update({
+            where: { id_reserva: reserva.id_reserva },
+            data: { stripe_payment_intent_id: paymentIntentId },
+          });
+        }
+      }
+
+      if (!paymentIntentId) {
+        console.warn(
+          "[capturarPagosTrayecto] Sin payment_intent para reserva:",
+          reserva.id_reserva,
+        );
+        errors.push({
+          reserva: reserva.id_reserva,
+          error: "No se encontró payment_intent",
+        });
+        continue;
+      }
+
+      const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+      if (pi.status === "requires_capture") {
+        const capturedPi = await stripe.paymentIntents.capture(paymentIntentId);
+        console.log(
+          "[capturarPagosTrayecto] PaymentIntent capturado:",
+          paymentIntentId,
+          "→",
+          capturedPi.status,
+        );
+        captured++;
+      } else if (pi.status === "succeeded") {
+        console.log(
+          "[capturarPagosTrayecto] PaymentIntent ya succeeded:",
+          paymentIntentId,
+        );
+        captured++;
+      } else {
+        console.warn(
+          "[capturarPagosTrayecto] PaymentIntent en estado no capturable:",
+          paymentIntentId,
+          "→",
+          pi.status,
+        );
+        errors.push({
+          reserva: reserva.id_reserva,
+          error: `PaymentIntent status: ${pi.status}`,
+        });
+        continue;
+      }
+
+      await prisma.$executeRawUnsafe(
+        "UPDATE reservas SET trip_outcome = 'success', trip_outcome_reason = NULL, trip_outcome_at = NOW(), stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ?), stripe_payment_intent_status = COALESCE(stripe_payment_intent_status, 'captured') WHERE id_reserva = ?",
+        paymentIntentId,
+        reserva.id_reserva,
+      );
+    } catch (error) {
+      console.error(
+        "[capturarPagosTrayecto] Error capturando reserva:",
+        reserva.id_reserva,
+        error?.message ?? error,
+      );
+      errors.push({
+        reserva: reserva.id_reserva,
+        error: error?.message ?? "Error desconocido",
+      });
+    }
+  }
+
+  console.log(
+    "[capturarPagosTrayecto] Finalizado. Capturadas:",
+    captured,
+    "Errores:",
+    errors.length,
+  );
+  return { captured, errors };
+}
+
 async function actualizarStatusReserva(req, res) {
   const { id } = req.params;
   const { status, payment_intent_id } = req.body;
@@ -1553,4 +1668,5 @@ export const ReservaController = {
   retomarPagoReserva,
   actualizarStatusReserva,
   reservaQR,
+  capturarPagosTrayecto,
 };

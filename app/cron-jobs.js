@@ -2,6 +2,7 @@ import cron from "node-cron";
 import { prisma } from "./database.js";
 import { UsersAPI } from "./utils/users-api.js";
 import { NotificationsAPI } from "./utils/notifications-api.js";
+import { ReservaController } from "./controllers/reserva.js";
 
 function getMessagesBaseHeaders() {
   const headers = {
@@ -332,6 +333,25 @@ async function tickTrayectoStatusAndNotify() {
         await notifyTrayectoFinalizado(trayecto);
       } catch (e) {
         console.error("Error enviando emails de trayecto finalizado:", e);
+      }
+
+      try {
+        const captureResult = await ReservaController.capturarPagosTrayecto(
+          trayecto.id,
+        );
+        console.log(
+          "[cron] Captura de pagos para trayecto",
+          trayecto.id,
+          ":",
+          captureResult,
+        );
+      } catch (e) {
+        console.error(
+          "[cron] Error capturando pagos del trayecto",
+          trayecto.id,
+          ":",
+          e,
+        );
       }
     }
   }

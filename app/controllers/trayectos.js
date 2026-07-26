@@ -9,6 +9,7 @@ import {
 } from "../cron-jobs.js";
 import { UsersAPI } from "../utils/users-api.js";
 import { CAEUtils } from "../utils/cae.js";
+import { ReservaController } from "./reserva.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -1149,6 +1150,14 @@ async function finalizarTrayecto(req, res) {
     await notifyTrayectoFinalizado(trayecto);
   } catch (e) {
     console.error("Error notificando trayecto finalizado:", e);
+  }
+
+  try {
+    const captureResult =
+      await ReservaController.capturarPagosTrayecto(trayectoId);
+    console.log("[finalizarTrayecto] Captura de pagos:", captureResult);
+  } catch (e) {
+    console.error("Error capturando pagos del trayecto:", e);
   }
 
   try {
