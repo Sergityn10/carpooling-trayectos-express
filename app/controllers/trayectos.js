@@ -418,7 +418,7 @@ async function crearTrayecto(req, res) {
   }
 
   const trayectoId = randomUUID();
-  const fechaHoraDate = new Date(fechaHoraSQL);
+  const fechaHoraDate = fechaHoraSQL;
   const nowForCheck = new Date();
   const diffMs = Math.abs(fechaHoraDate.getTime() - nowForCheck.getTime());
   const TWO_MINUTES = 2 * 60 * 1000;
@@ -437,7 +437,7 @@ async function crearTrayecto(req, res) {
         id: trayectoId,
         origen,
         destino,
-        hora: new Date(fechaHoraSQL),
+        hora: fechaHoraSQL,
         plazas,
         conductor,
         vehiculo_id,
@@ -639,7 +639,7 @@ async function crearTrayecto(req, res) {
         origen,
         destino,
         conductor,
-        hora: new Date(fechaHoraSQL),
+        hora: fechaHoraSQL,
       });
     } catch (e) {
       console.error(
@@ -657,11 +657,8 @@ async function crearTrayecto(req, res) {
 }
 
 function convertirFechaHoraUTC(fecha, hora) {
-  let fechaHoraSQL;
   const fechaHora = new Date(`${fecha.trim()}T${hora.trim()}:00.000Z`);
-  // Formatea a string compatible con SQL DATETIME (YYYY-MM-DD HH:MM:SS)
-  fechaHoraSQL = fechaHora.toISOString().slice(0, 19).replace("T", " ");
-  return fechaHoraSQL;
+  return fechaHora;
 }
 
 async function obtenerTrayectos(req, res) {
@@ -746,8 +743,8 @@ async function obtenerTrayectoPorId(req, res) {
 
   const vehicleInfo = await UsersAPI.fetchVehicleInfo(trayecto.vehiculo_id);
 
-  const fecha = new Date(trayecto.hora).toDateString();
   const fechaHora = new Date(trayecto.hora).toISOString();
+  const fecha = fechaHora.split("T")[0];
   console.log(
     "[obtenerTrayectoPorId] fecha:",
     fecha,
@@ -1217,7 +1214,7 @@ async function actualizarTrayecto(req, res) {
   if (data.fecha && data.hora) {
     try {
       const fechaHoraSQL = convertirFechaHoraUTC(data.fecha, data.hora);
-      updateData.hora = new Date(fechaHoraSQL);
+      updateData.hora = fechaHoraSQL;
       delete data.fecha;
       delete data.hora;
     } catch (error) {
@@ -1280,7 +1277,7 @@ async function patchTrayecto(req, res) {
     routeIndex,
   } = validation.data;
 
-  let fechaHora = convertirFechaHoraUTC(fecha, hora);
+  const fechaHora = convertirFechaHoraUTC(fecha, hora);
 
   const original = await prisma.trayecto.findUnique({ where: { id } });
   if (!original) {
@@ -1310,7 +1307,7 @@ async function patchTrayecto(req, res) {
 
   updateData.origen = origen;
   updateData.destino = destino;
-  updateData.hora = new Date(fechaHora);
+  updateData.hora = fechaHora;
   updateData.plazas = plazas;
   updateData.conductor = conductor;
   updateData.vehiculo_id = vehiculo_id;
@@ -1819,8 +1816,8 @@ async function obtenerTrayectoCompleto(req, res) {
   const userId = req.user?.id;
   const valorado = await hasUserRatedTrayecto(userId, trayecto.id);
 
-  const fecha = new Date(trayecto.hora).toDateString();
   const fechaHora = new Date(trayecto.hora).toISOString();
+  const fecha = fechaHora.split("T")[0];
 
   const response = {
     ...trayecto,
@@ -1999,6 +1996,137 @@ async function obtenerTrayectosPorEvento(req, res) {
   }
 }
 
+async function buscarTrayectosPorEvento(req, res) {
+  const { eventoId } = req.params;
+  const { lat, lng, direccion, radius } = req.query;
+
+  if (!eventoId) {
+    return res.status(400).send({
+      status: "Error",
+      message: "eventoId es obligatorio",
+    });
+  }
+
+  const userLat = parseFloat(lat);
+  const userLng = parseFloat(lng);
+  if (isNaN(userLat) || isNaN(userLng)) {
+    return res.status(400).send({
+      status: "Error",
+      message: "lat y lng son obligatorios y deben ser numéricos",
+    });
+  }
+
+  const searchRadiusKm = parseFloat(radius) || SEARCH_DISTANCE_KM;
+  const dir = (direccion ?? "").toString().trim().toLowerCase();
+
+  try {
+    const { headers } = getAuthHeaders(req);
+    const eventoInfo = await UsersAPI.fetchEventoInfo(eventoId, { headers });
+    if (!eventoInfo?.event?.latitude || !eventoInfo?.event?.longitude) {
+      return res.status(404).send({
+        status: "Error",
+        message: "No se pudieron obtener las coordenadas del evento",
+      });
+    }
+
+    const eventoLat = parseFloat(eventoInfo.event.latitude);
+    const eventoLng = parseFloat(eventoInfo.event.longitude);
+
+    const where = {
+      evento_id: eventoId,
+      disponible: { gte: 1 },
+      status: { notIn: ["finalizado", "en curso", "cancelado"] },
+    };
+
+    let rows = await prisma.trayecto.findMany({
+      where,
+      orderBy: { hora: "asc" },
+    });
+
+    if (dir === "ida") {
+      rows = rows.filter(
+        (t) =>
+          t.destino_lat != null &&
+          Math.abs(t.destino_lat - eventoLat) < 0.01 &&
+          Math.abs(t.destino_lng - eventoLng) < 0.01,
+      );
+    } else if (dir === "vuelta") {
+      rows = rows.filter(
+        (t) =>
+          t.origen_lat != null &&
+          Math.abs(t.origen_lat - eventoLat) < 0.01 &&
+          Math.abs(t.origen_lng - eventoLng) < 0.01,
+      );
+    }
+
+    const candidateIds = rows.map((t) => t.id);
+    let tramosByTrayecto = new Map();
+    if (candidateIds.length > 0) {
+      const tramos = await prisma.tramo.findMany({
+        where: { id_trayecto: { in: candidateIds } },
+        select: { id_trayecto: true, lat: true, lng: true },
+      });
+      for (const tramo of tramos) {
+        if (!tramosByTrayecto.has(tramo.id_trayecto)) {
+          tramosByTrayecto.set(tramo.id_trayecto, []);
+        }
+        tramosByTrayecto.get(tramo.id_trayecto).push(tramo);
+      }
+    }
+
+    const filtered = rows.filter((t) => {
+      const dOrigin = haversineKm(userLat, userLng, t.origen_lat, t.origen_lng);
+      if (dOrigin <= searchRadiusKm) return true;
+
+      const tramos = tramosByTrayecto.get(t.id) || [];
+      const hasTramoMatch = tramos.some(
+        (tr) => haversineKm(userLat, userLng, tr.lat, tr.lng) <= searchRadiusKm,
+      );
+      return hasTramoMatch;
+    });
+
+    const conductorIds = [...new Set(filtered.map((t) => String(t.conductor)))];
+    const usersList = await UsersAPI.fetchUsersByIds(conductorIds);
+    const usersMap = new Map(usersList.map((u) => [u.id, u]));
+
+    const userId = req.user?.id;
+    const ratedIds = await getRatedTrayectoIdsForUser(
+      userId,
+      filtered.map((t) => t.id),
+    );
+
+    const data = filtered.map((t) => {
+      const conductorInfo = usersMap.get(String(t.conductor));
+      return {
+        ...t,
+        conductor: conductorInfo?.name || "Desconocido",
+        conductor_id: t.conductor,
+        img_perfil: conductorInfo?.img_perfil || null,
+        valorado: ratedIds.has(String(t.id)),
+        distancia_km:
+          Math.round(
+            haversineKm(userLat, userLng, t.origen_lat, t.origen_lng) * 100,
+          ) / 100,
+      };
+    });
+
+    return res.status(200).json({
+      status: "Success",
+      evento_id: eventoId,
+      user_location: { lat: userLat, lng: userLng },
+      search_radius_km: searchRadiusKm,
+      total: data.length,
+      trayectos: data,
+    });
+  } catch (error) {
+    console.error("Error en buscarTrayectosPorEvento:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error buscando trayectos por evento cerca del usuario",
+    });
+  }
+}
+
 async function obtenerEstadoTrayectoPasajero(req, res) {
   const { id: trayectoId } = req.params;
   if (!trayectoId || trayectoId === "undefined") {
@@ -2161,6 +2289,7 @@ export const TrayectosController = {
   buscarTrayectos,
   obtenerTrayectosPorConductor,
   obtenerTrayectosPorEvento,
+  buscarTrayectosPorEvento,
   obtenerMisTrayectos,
   obtenerProximosTrayectos,
   updateLatLong,

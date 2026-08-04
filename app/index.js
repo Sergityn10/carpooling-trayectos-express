@@ -24,7 +24,11 @@ import { CAEUtils } from "./utils/cae.js";
 const app = express();
 app.set("etag", false);
 
-await initDatabase();
+try {
+  await initDatabase();
+} catch (error) {
+  console.error("Error al inicializar la base de datos:", error.message);
+}
 
 startTrayectoStatusCron({
   schedule: process.env.TRAYECTO_STATUS_CRON_SCHEDULE || "*/1 * * * *",
@@ -138,6 +142,14 @@ app.get(
   utilsAuthentication.tryAuthenticate,
   async (req, res) => {
     TrayectosController.obtenerTrayectosPorEvento(req, res);
+  },
+);
+
+app.get(
+  "/api/trayecto/evento/:eventoId/cerca",
+  utilsAuthentication.tryAuthenticate,
+  async (req, res) => {
+    TrayectosController.buscarTrayectosPorEvento(req, res);
   },
 );
 
@@ -500,12 +512,10 @@ app.patch(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede cambiar el estado de reportes CAE",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede cambiar el estado de reportes CAE",
+      });
     }
     const { id } = req.params;
     const { status } = req.body || {};
@@ -529,12 +539,10 @@ app.patch(
         : e.message?.includes("Estado inválido")
           ? 400
           : 500;
-      return res
-        .status(httpStatus)
-        .send({
-          status: "Error",
-          message: e.message ?? "Error al actualizar estado del reporte",
-        });
+      return res.status(httpStatus).send({
+        status: "Error",
+        message: e.message ?? "Error al actualizar estado del reporte",
+      });
     }
   },
 );
@@ -544,12 +552,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede eliminar reportes CAE",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede eliminar reportes CAE",
+      });
     }
     const { id } = req.params;
     if (!id) {
@@ -563,12 +569,10 @@ app.delete(
     } catch (e) {
       console.error("[CAE] Error eliminando reporte:", e);
       const httpStatus = e.message?.includes("no encontrado") ? 404 : 500;
-      return res
-        .status(httpStatus)
-        .send({
-          status: "Error",
-          message: e.message ?? "Error al eliminar reporte CAE",
-        });
+      return res.status(httpStatus).send({
+        status: "Error",
+        message: e.message ?? "Error al eliminar reporte CAE",
+      });
     }
   },
 );

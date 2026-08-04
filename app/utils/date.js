@@ -1,9 +1,6 @@
 function convertirFechaHoraUTC(fecha, hora) {
-  let fechaHoraSQL;
   const fechaHora = new Date(`${fecha.trim()}T${hora.trim()}:00.000Z`);
-  // Formatea a string compatible con SQL DATETIME (YYYY-MM-DD HH:MM:SS)
-  fechaHoraSQL = fechaHora.toISOString().slice(0, 19).replace("T", " ");
-  return fechaHoraSQL;
+  return fechaHora;
 }
 
 export const DateUtils = {
