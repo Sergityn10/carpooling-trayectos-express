@@ -1000,6 +1000,74 @@ app.get("/api/oil/precios/gasoil/provincia/:idProvincia", async (req, res) => {
   }
 });
 
+// Admin: listar todos los trayectos con filtros y paginación
+app.get(
+  "/api/admin/trayectos",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res
+        .status(403)
+        .send({
+          status: "Error",
+          message: "Solo un admin puede acceder a este endpoint",
+        });
+    }
+    TrayectosController.adminGetAllTrayectos(req, res);
+  },
+);
+
+// Admin: obtener trayecto por id con detalles completos
+app.get(
+  "/api/admin/trayectos/:id",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res
+        .status(403)
+        .send({
+          status: "Error",
+          message: "Solo un admin puede acceder a este endpoint",
+        });
+    }
+    TrayectosController.adminGetTrayectoById(req, res);
+  },
+);
+
+// Admin: actualizar trayecto (campos permitidos)
+app.put(
+  "/api/admin/trayectos/:id",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res
+        .status(403)
+        .send({
+          status: "Error",
+          message: "Solo un admin puede acceder a este endpoint",
+        });
+    }
+    TrayectosController.adminUpdateTrayecto(req, res);
+  },
+);
+
+// Admin: eliminar trayecto
+app.delete(
+  "/api/admin/trayectos/:id",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    if (req.user?.role !== "admin") {
+      return res
+        .status(403)
+        .send({
+          status: "Error",
+          message: "Solo un admin puede acceder a este endpoint",
+        });
+    }
+    TrayectosController.adminDeleteTrayecto(req, res);
+  },
+);
+
 // Devuelve el precio medio de gasoil para una provincia por nombre (requiere :provincia).
 app.get(
   "/api/oil/precios/gasoil/provincia-nombre/:provincia",

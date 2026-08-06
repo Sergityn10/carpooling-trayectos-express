@@ -4,6 +4,7 @@ import { prisma } from "../database.js";
 import dotenv from "dotenv";
 import { UsersAPI } from "../utils/users-api.js";
 import { NotificationsAPI } from "../utils/notifications-api.js";
+import { PaginationUtils } from "../utils/pagination.js";
 
 import Stripe from "stripe";
 dotenv.config();
@@ -575,60 +576,83 @@ async function getReservasByTravelId(req, res) {
 async function obtenerMisReservas(req, res) {
   const { userId } = req.user;
   const { userIdParam } = req.params;
+  const { page, limit, offset } = PaginationUtils.parsePaginationParams(req);
 
   if (String(userId) !== String(userIdParam)) {
-    console.log(typeof userId, userIdParam);
     return res.status(401).send({
       status: "Error",
       message: "No tienes permiso para ver las reservas de este usuario",
     });
   }
 
-  let pasajerosList = await prisma.reserva.findMany({
-    where: { user_id: userId },
-  });
-  if (pasajerosList.length === 0) {
+  try {
+    const where = { user_id: userId };
+    let pasajerosList = await prisma.reserva.findMany({
+      where,
+      orderBy: { created_at: "desc" },
+      skip: offset,
+      take: limit,
+    });
+    const total = await prisma.reserva.count({ where });
+
+    if (pasajerosList.length === 0) {
+      return res.status(200).send({
+        status: "Success",
+        data: [],
+        pagination: PaginationUtils.buildPaginationResponse({
+          page,
+          limit,
+          total: 0,
+        }),
+      });
+    }
+
+    const ratedTrayectoIds = await getRatedTrayectoIdsForUser(
+      userId,
+      pasajerosList.map((r) => r.id_trayecto),
+    );
+    pasajerosList = pasajerosList.map((r) => ({
+      ...r,
+      valorado: ratedTrayectoIds.has(String(r.id_trayecto)),
+    }));
+
+    pasajerosList = await Promise.all(
+      pasajerosList.map(async (reserva) => {
+        const trayecto = await prisma.trayecto.findUnique({
+          where: { id: reserva.id_trayecto },
+        });
+
+        const conductorInfo = await UsersAPI.fetchUserPublicInfo(
+          String(trayecto.conductor),
+        );
+        const conductorId = trayecto.conductor;
+        trayecto.conductor = conductorInfo?.name || "Desconocido";
+        trayecto.conductor_id = conductorId;
+        trayecto.img_perfil = conductorInfo?.img_perfil;
+
+        return {
+          ...reserva,
+          trayecto,
+        };
+      }),
+    );
+
     return res.status(200).send({
       status: "Success",
-      message: "No se ha encontrado este trayecto o todavia no tiene reservas",
-      pasajerosList,
+      data: pasajerosList,
+      pagination: PaginationUtils.buildPaginationResponse({
+        page,
+        limit,
+        total,
+      }),
+    });
+  } catch (error) {
+    console.error("Error en obtenerMisReservas:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error obteniendo las reservas",
     });
   }
-
-  const ratedTrayectoIds = await getRatedTrayectoIdsForUser(
-    userId,
-    pasajerosList.map((r) => r.id_trayecto),
-  );
-  pasajerosList = pasajerosList.map((r) => ({
-    ...r,
-    valorado: ratedTrayectoIds.has(String(r.id_trayecto)),
-  }));
-
-  pasajerosList = await Promise.all(
-    pasajerosList.map(async (reserva) => {
-      const trayecto = await prisma.trayecto.findUnique({
-        where: { id: reserva.id_trayecto },
-      });
-
-      const conductorInfo = await UsersAPI.fetchUserPublicInfo(
-        String(trayecto.conductor),
-      );
-      const conductorId = trayecto.conductor;
-      trayecto.conductor = conductorInfo?.name || "Desconocido";
-      trayecto.conductor_id = conductorId;
-      trayecto.img_perfil = conductorInfo?.img_perfil;
-
-      return {
-        ...reserva,
-        trayecto,
-      };
-    }),
-  );
-
-  return res.status(200).send({
-    status: "Success",
-    pasajerosList,
-  });
 }
 
 async function deleteReserva(req, res) {

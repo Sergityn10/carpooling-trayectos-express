@@ -61,13 +61,20 @@ GET /api/reserva/userId/:userIdParam
 
 **Autenticación:** Requerida (`authenticate`)
 
-**Descripción:** Devuelve todas las reservas del usuario autenticado, incluyendo los datos del trayecto asociado y la información del conductor. El `userIdParam` debe coincidir con el ID del usuario autenticado.
+**Descripción:** Devuelve todas las reservas del usuario autenticado, incluyendo los datos del trayecto asociado y la información del conductor. El `userIdParam` debe coincidir con el ID del usuario autenticado. Incluye paginación.
 
 **Path params:**
 
 | Parámetro     | Tipo          | Descripción                                                |
 | ------------- | ------------- | ---------------------------------------------------------- |
 | `userIdParam` | string (UUID) | ID del usuario (debe coincidir con el usuario autenticado) |
+
+**Query params:**
+
+| Parámetro | Tipo | Descripción                                    |
+| --------- | ---- | ---------------------------------------------- |
+| `page`    | Int  | Página (por defecto 1)                         |
+| `limit`   | Int  | Elementos por página (por defecto 10, máx 100) |
 
 **Respuesta 200:**
 
@@ -95,7 +102,17 @@ GET /api/reserva/userId/:userIdParam
         "precio": 15
       }
     }
-  ]
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 25,
+    "totalPages": 3,
+    "hasNext": true,
+    "hasPrev": false,
+    "nextPage": 2,
+    "prevPage": null
+  }
 }
 ```
 

@@ -334,3 +334,231 @@ POST /api/trayecto/:id/llegada
 ```
 
 **Auth:** Requerida
+
+---
+
+## Administración de trayectos (Admin)
+
+Endpoints exclusivos para administradores (`req.user.role === "admin"`). Permiten gestionar todos los trayectos del sistema, incluidos los ya finalizados o cancelados.
+
+**Base URL:** `/api/admin/trayectos`
+
+### Listar todos los trayectos (admin)
+
+```
+GET /api/admin/trayectos
+```
+
+**Auth:** Requerida (solo admin)
+
+**Descripción:** Devuelve todos los trayectos del sistema (incluidos pasados y cancelados) con filtros avanzados, ordenación y paginación. Incluye nombre y email del conductor obtenidos del microservicio de usuarios.
+
+**Query params:**
+
+| Param        | Tipo   | Descripción                                                                                      |
+| ------------ | ------ | ------------------------------------------------------------------------------------------------ |
+| `status`     | String | Filtrar por estado. Acepta múltiples separados por coma (ej: `programado,en curso`)              |
+| `conductor`  | UUID   | Filtrar por ID de conductor                                                                      |
+| `evento_id`  | UUID   | Filtrar por evento asociado                                                                      |
+| `fechaDesde` | String | Fecha mínima del campo `hora` (formato ISO 8601)                                                 |
+| `fechaHasta` | String | Fecha máxima del campo `hora` (formato ISO 8601)                                                 |
+| `search`     | String | Búsqueda textual sobre `origen` y `destino`                                                      |
+| `orderBy`    | String | Campo por el que ordenar (ej: `hora`, `created_at`, `precio`). Por defecto `created_at`          |
+| `order`      | String | Dirección de ordenación: `asc` o `desc`. Por defecto `desc`                                      |
+| `page`       | Int    | Página (por defecto 1)                                                                           |
+| `limit`      | Int    | Elementos por página (por defecto 10, máximo 100)                                                |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "origen": "Madrid",
+      "destino": "Toledo",
+      "hora": "2026-07-15T10:00:00.000Z",
+      "plazas": 4,
+      "disponible": 3,
+      "precio": 15,
+      "precio_conductor": 11.00,
+      "conductor": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "conductor_nombre": "Juan Pérez",
+      "conductor_email": "juan@example.com",
+      "vehiculo_id": "v1e2d3c4-b5a6-7890-abcd-ef1234567890",
+      "status": "finalizado",
+      "created_at": "2026-07-10T12:00:00.000Z",
+      "updated_at": "2026-07-15T11:35:00.000Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 150,
+    "totalPages": 15,
+    "hasNext": true,
+    "hasPrev": false,
+    "nextPage": 2,
+    "prevPage": null
+  }
+}
+```
+
+**Errores:**
+
+- `403` — El usuario no es admin.
+- `500` — Error en el servidor.
+
+---
+
+### Obtener trayecto por ID (admin)
+
+```
+GET /api/admin/trayectos/:id
+```
+
+**Auth:** Requerida (solo admin)
+
+**Descripción:** Devuelve el detalle completo de un trayecto, incluyendo reservas, tramos de ruta y eventos del trayecto (comienzo, recogida, llegada_destino, finalizacion).
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "origen": "Madrid",
+    "destino": "Toledo",
+    "hora": "2026-07-15T10:00:00.000Z",
+    "plazas": 4,
+    "disponible": 3,
+    "precio": 15,
+    "conductor": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "conductor_nombre": "Juan Pérez",
+    "conductor_email": "juan@example.com",
+    "status": "finalizado",
+    "Reservas": [ ... ],
+    "Tramos": [ ... ],
+    "eventos": [
+      {
+        "id": "e0f1a2b3-c4d5-7890-abcd-ef1234567890",
+        "tipo": "comienzo",
+        "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "id_reserva": null,
+        "lat": 40.4168,
+        "lng": -3.7038,
+        "created_at": "2026-07-15T10:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+**Errores:**
+
+- `403` — El usuario no es admin.
+- `404` — Trayecto no encontrado.
+- `500` — Error en el servidor.
+
+---
+
+### Actualizar trayecto (admin)
+
+```
+PUT /api/admin/trayectos/:id
+```
+
+**Auth:** Requerida (solo admin)
+
+**Descripción:** Actualiza los campos permitidos de un trayecto. A diferencia del PUT público, este endpoint permite modificar el `status` y el `conductor` directamente, sin las validaciones de precio del fluente normal.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+
+**Body (JSON):** Cualquier subconjunto de los campos permitidos:
+
+```json
+{
+  "origen": "Madrid, Nueva dirección",
+  "destino": "Toledo, Plaza Mayor",
+  "hora": "2026-07-16T11:00:00.000Z",
+  "plazas": 3,
+  "disponible": 2,
+  "precio": 20,
+  "precio_conductor": 15,
+  "conductor": "b2c3d4e5-f678-90ab-cdef-123456789012",
+  "vehiculo_id": "v1e2d3c4-b5a6-7890-abcd-ef1234567890",
+  "routeIndex": 1,
+  "status": "programado",
+  "origen_lat": 40.4168,
+  "origen_lng": -3.7038,
+  "destino_lat": 39.8628,
+  "destino_lng": -4.0273,
+  "evento_id": "f1e2d3c4-b5a6-7890-abcd-ef1234567890"
+}
+```
+
+**Campos actualizables:**
+
+`origen`, `destino`, `hora`, `plazas`, `disponible`, `precio`, `precio_conductor`, `conductor`, `vehiculo_id`, `routeIndex`, `status`, `origen_lat`, `origen_lng`, `destino_lat`, `destino_lng`, `evento_id`
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "message": "Trayecto actualizado correctamente",
+  "data": { ... }
+}
+```
+
+**Errores:**
+
+- `400` — No hay campos para actualizar.
+- `403` — El usuario no es admin.
+- `404` — Trayecto no encontrado.
+- `500` — Error en el servidor.
+
+---
+
+### Eliminar trayecto (admin)
+
+```
+DELETE /api/admin/trayectos/:id
+```
+
+**Auth:** Requerida (solo admin)
+
+**Descripción:** Elimina permanentemente un trayecto y todas sus dependencias (tramos, recorridos, eventos, comentarios, informes CAE, pagos y reservas) en una transacción atómica.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción     |
+| --------- | ------------- | --------------- |
+| `id`      | string (UUID) | ID del trayecto |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "message": "Trayecto eliminado correctamente"
+}
+```
+
+**Errores:**
+
+- `403` — El usuario no es admin.
+- `404` — Trayecto no encontrado.
+- `500` — Error en el servidor.

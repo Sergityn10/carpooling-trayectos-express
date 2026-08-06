@@ -1225,10 +1225,13 @@ eur = km_with_company × num_pasajeros_en_segmento × EUR_PER_PASSENGER_KM
    - **km_with_company:** suma de los segmentos donde había al menos un pasajero a bordo (determinado por eventos de `recogida` y `llegada_destino`).
    - **kwh_generated:** suma por segmento de `km_segmento × pasajeros_en_segmento × KWH_PER_PASSENGER_KM`.
    - **eur_generated:** suma por segmento de `km_segmento × pasajeros_en_segmento × EUR_PER_PASSENGER_KM`.
-3. Al completar el cálculo, el estado pasa a `in_review` (en revisión).
-4. Un administrador revisa el informe y lo aprueba mediante `PATCH /api/cae/:id/approve`, cambiando el estado a `completed`.
+3. Se detectan y registran en log todos los eventos del trayecto (`comienzo`, `recogida`, `llegada_destino`, `finalizacion`) con sus coordenadas y timestamps reales.
+4. Al completar el cálculo, el estado pasa a `in_review` (en revisión).
+5. Un administrador revisa el informe y lo aprueba mediante `PATCH /api/cae/:id/approve`, cambiando el estado a `completed`.
 
 > **Nota:** El cálculo es asíncrono y no bloquea la finalización del trayecto. Si hay un error, el informe queda en estado `pending`.
+
+> **Eventos del trayecto en el CAE:** El informe CAE incluye todos los eventos del ciclo de vida del trayecto: `comienzo` (inicio real), `recogida` (confirmación de pasajero), `llegada_destino` (fin de pasajero) y `finalizacion` (fin del trayecto). Cada evento se registra con coordenadas GPS y timestamp, permitiendo verificar el recorrido completo.
 
 ### Endpoint de balance CAE
 
@@ -1587,7 +1590,11 @@ GET /api/cae/reports/:id
       "viaje": {
         "origen": "Madrid, Centro",
         "destino": "Toledo, Casco",
-        "hora_inicio": "2026-07-15T10:00:00.000Z",
+        "hora_programada": "2026-07-15T10:00:00.000Z",
+        "hora_inicio_real": "2026-07-15T10:00:00.000Z",
+        "hora_fin_real": "2026-07-15T11:35:00.000Z",
+        "inicio_coords": { "lat": 40.4168, "lng": -3.7038 },
+        "fin_coords": { "lat": 39.8628, "lng": -4.0273 },
         "origen_coords": { "lat": 40.4168, "lng": -3.7038 },
         "destino_coords": { "lat": 39.8628, "lng": -4.0273 },
         "trazado": [
@@ -1664,9 +1671,10 @@ GET /api/cae/reports/:id
 - ✅ Listado de viajeros (conductor y pasajeros) con nombre y email
 - ✅ Matrícula, marca y modelo del vehículo
 - ✅ Geolocalización de inicio, trazado y fin del trayecto
-- ✅ Tiempos de inicio y fin
+- ✅ Hora programada del trayecto + hora real de inicio y fin (eventos `comienzo` y `finalizacion`)
+- ✅ Coordenadas reales de inicio y fin (desde eventos `comienzo` y `finalizacion`)
 - ✅ Confirmación activa de inicio y fin por cada pasajero (eventos de recogida y llegada_destino)
-- ✅ Eventos completos del trayecto (comienzo, recogida, llegada_destino, finalizar) con geolocalización y timestamps
+- ✅ Eventos completos del trayecto (comienzo, recogida, llegada_destino, finalizacion) con geolocalización y timestamps
 - ✅ Verificación de vehículo único (todos los viajeros en el mismo `vehiculo_id`)
 - ❌ DNI/NIE y teléfono — pendientes del microservicio de usuarios
 
@@ -1776,6 +1784,181 @@ La búsqueda de trayectos (`GET /api/trayecto/search`) ahora también matches tr
 
 ---
 
+## Administración de trayectos (Admin)
+
+Endpoints exclusivos para administradores. Permiten gestionar todos los trayectos del sistema, incluidos los finalizados y cancelados, con filtros avanzados y paginación.
+
+**Base URL:** `/api/admin/trayectos`
+
+### 1. Listar todos los trayectos (admin)
+
+```
+GET /api/admin/trayectos
+```
+
+**Autenticación:** Requerida (solo admin)
+
+**Descripción:** Devuelve todos los trayectos del sistema con filtros por estado, conductor, evento, rango de fechas, búsqueda textual, ordenación y paginación. Incluye nombre y email del conductor.
+
+**Query params:**
+
+| Parámetro    | Tipo   | Descripción                                                                     |
+| ------------ | ------ | ------------------------------------------------------------------------------- |
+| `status`     | String | Filtrar por estado (acepta múltiples separados por coma: `programado,en curso`) |
+| `conductor`  | UUID   | Filtrar por ID de conductor                                                     |
+| `evento_id`  | UUID   | Filtrar por evento asociado                                                     |
+| `fechaDesde` | String | Fecha mínima del campo `hora` (ISO 8601)                                        |
+| `fechaHasta` | String | Fecha máxima del campo `hora` (ISO 8601)                                        |
+| `search`     | String | Búsqueda textual sobre `origen` y `destino`                                     |
+| `orderBy`    | String | Campo de ordenación (por defecto `created_at`)                                  |
+| `order`      | String | `asc` o `desc` (por defecto `desc`)                                             |
+| `page`       | Int    | Página (por defecto 1)                                                          |
+| `limit`      | Int    | Elementos por página (por defecto 10, máximo 100)                               |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "origen": "Madrid",
+      "destino": "Toledo",
+      "hora": "2026-07-15T10:00:00.000Z",
+      "plazas": 4,
+      "disponible": 3,
+      "precio": 15,
+      "conductor": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "conductor_nombre": "Juan Pérez",
+      "conductor_email": "juan@example.com",
+      "status": "finalizado",
+      "created_at": "2026-07-10T12:00:00.000Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 150,
+    "totalPages": 15,
+    "hasNext": true,
+    "hasPrev": false,
+    "nextPage": 2,
+    "prevPage": null
+  }
+}
+```
+
+**Errores:**
+
+- `403` — El usuario no es admin.
+- `500` — Error en el servidor.
+
+---
+
+### 2. Obtener trayecto por ID (admin)
+
+```
+GET /api/admin/trayectos/:id
+```
+
+**Autenticación:** Requerida (solo admin)
+
+**Descripción:** Devuelve el detalle completo de un trayecto con reservas, tramos de ruta y eventos del ciclo de vida (comienzo, recogida, llegada_destino, finalizacion).
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "origen": "Madrid",
+    "destino": "Toledo",
+    "hora": "2026-07-15T10:00:00.000Z",
+    "status": "finalizado",
+    "conductor_nombre": "Juan Pérez",
+    "conductor_email": "juan@example.com",
+    "Reservas": [ ... ],
+    "Tramos": [ ... ],
+    "eventos": [
+      {
+        "id": "e0f1a2b3-c4d5-7890-abcd-ef1234567890",
+        "tipo": "comienzo",
+        "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "id_reserva": null,
+        "lat": 40.4168,
+        "lng": -3.7038,
+        "created_at": "2026-07-15T10:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+**Errores:**
+
+- `403` — El usuario no es admin.
+- `404` — Trayecto no encontrado.
+
+---
+
+### 3. Actualizar trayecto (admin)
+
+```
+PUT /api/admin/trayectos/:id
+```
+
+**Autenticación:** Requerida (solo admin)
+
+**Descripción:** Actualiza campos permitidos de un trayecto. Permite modificar `status` y `conductor` directamente, sin las validaciones de precio del flujo normal.
+
+**Campos actualizables:** `origen`, `destino`, `hora`, `plazas`, `disponible`, `precio`, `precio_conductor`, `conductor`, `vehiculo_id`, `routeIndex`, `status`, `origen_lat`, `origen_lng`, `destino_lat`, `destino_lng`, `evento_id`
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "message": "Trayecto actualizado correctamente",
+  "data": { ... }
+}
+```
+
+**Errores:**
+
+- `400` — No hay campos para actualizar.
+- `403` — El usuario no es admin.
+- `404` — Trayecto no encontrado.
+
+---
+
+### 4. Eliminar trayecto (admin)
+
+```
+DELETE /api/admin/trayectos/:id
+```
+
+**Autenticación:** Requerida (solo admin)
+
+**Descripción:** Elimina permanentemente un trayecto y todas sus dependencias (tramos, recorridos, eventos, comentarios, informes CAE, pagos y reservas) en una transacción atómica.
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "message": "Trayecto eliminado correctamente"
+}
+```
+
+**Errores:**
+
+- `403` — El usuario no es admin.
+- `404` — Trayecto no encontrado.
+
+---
+
 ## Comentarios / Opiniones
 
 ### 1. Crear opinión
@@ -1842,13 +2025,20 @@ GET /api/comments/user_id_commentator/:userId
 
 **Autenticación:** No requerida
 
-**Descripción:** Devuelve todas las opiniones que ha escrito un usuario específico.
+**Descripción:** Devuelve todas las opiniones que ha escrito un usuario específico, con paginación.
 
 **Path params:**
 
 | Parámetro | Tipo          | Descripción                 |
 | --------- | ------------- | --------------------------- |
 | `userId`  | string (UUID) | ID del usuario comentarista |
+
+**Query params:**
+
+| Parámetro | Tipo | Descripción                                    |
+| --------- | ---- | ---------------------------------------------- |
+| `page`    | Int  | Página (por defecto 1)                         |
+| `limit`   | Int  | Elementos por página (por defecto 10, máx 100) |
 
 **Respuesta 200:**
 
@@ -1864,7 +2054,17 @@ GET /api/comments/user_id_commentator/:userId
       "opinion": "Excelente viaje",
       "rating": 9
     }
-  ]
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 25,
+    "totalPages": 3,
+    "hasNext": true,
+    "hasPrev": false,
+    "nextPage": 2,
+    "prevPage": null
+  }
 }
 ```
 
@@ -1882,13 +2082,20 @@ GET /api/comments/user_id_trayect/:userId
 
 **Autenticación:** No requerida
 
-**Descripción:** Devuelve todas las opiniones recibidas por un usuario específico (como usuario valorado).
+**Descripción:** Devuelve todas las opiniones recibidas por un usuario específico (como usuario valorado), con paginación.
 
 **Path params:**
 
 | Parámetro | Tipo          | Descripción             |
 | --------- | ------------- | ----------------------- |
 | `userId`  | string (UUID) | ID del usuario valorado |
+
+**Query params:**
+
+| Parámetro | Tipo | Descripción                                    |
+| --------- | ---- | ---------------------------------------------- |
+| `page`    | Int  | Página (por defecto 1)                         |
+| `limit`   | Int  | Elementos por página (por defecto 10, máx 100) |
 
 **Respuesta 200:**
 
@@ -1904,7 +2111,17 @@ GET /api/comments/user_id_trayect/:userId
       "opinion": "Excelente viaje",
       "rating": 9
     }
-  ]
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 25,
+    "totalPages": 3,
+    "hasNext": true,
+    "hasPrev": false,
+    "nextPage": 2,
+    "prevPage": null
+  }
 }
 ```
 

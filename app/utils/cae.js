@@ -158,6 +158,27 @@ async function generateInfoCAE(trayectoId) {
   const dropoffEvents = eventos.filter(
     (e) => e.TipoEvento?.nombre === "llegada_destino" && e.id_reserva,
   );
+  const comienzoEvent = eventos.find(
+    (e) => e.TipoEvento?.nombre === "comienzo",
+  );
+  const finalizacionEvent = eventos.find(
+    (e) => e.TipoEvento?.nombre === "finalizacion",
+  );
+
+  const eventoTipos = eventos.map((e) => e.TipoEvento?.nombre).filter(Boolean);
+  console.log(
+    `[CAE] Eventos detectados en trayecto ${trayectoId}: [${eventoTipos.join(", ")}]`,
+  );
+  if (comienzoEvent) {
+    console.log(
+      `[CAE] Inicio real del trayecto: ${comienzoEvent.created_at.toISOString()} (lat=${comienzoEvent.lat}, lng=${comienzoEvent.lng})`,
+    );
+  }
+  if (finalizacionEvent) {
+    console.log(
+      `[CAE] Fin real del trayecto: ${finalizacionEvent.created_at.toISOString()} (lat=${finalizacionEvent.lat}, lng=${finalizacionEvent.lng})`,
+    );
+  }
 
   const passengerSegments = [];
   for (const pickup of pickupEvents) {
@@ -632,6 +653,13 @@ async function getCAEReportData(reportId, { headers = {} } = {}) {
       };
     });
 
+    const comienzoEvent = trayectoEventos.find(
+      (e) => e.TipoEvento?.nombre === "comienzo",
+    );
+    const finalizacionEvent = trayectoEventos.find(
+      (e) => e.TipoEvento?.nombre === "finalizacion",
+    );
+
     return {
       cae_id: cae.id,
       trayecto_id: cae.id_trayecto,
@@ -643,7 +671,17 @@ async function getCAEReportData(reportId, { headers = {} } = {}) {
       viaje: {
         origen: trayecto?.origen ?? null,
         destino: trayecto?.destino ?? null,
-        hora_inicio: trayecto?.hora ?? null,
+        hora_programada: trayecto?.hora ?? null,
+        hora_inicio_real: comienzoEvent ? comienzoEvent.created_at : null,
+        hora_fin_real: finalizacionEvent ? finalizacionEvent.created_at : null,
+        inicio_coords:
+          comienzoEvent && comienzoEvent.lat != null
+            ? { lat: comienzoEvent.lat, lng: comienzoEvent.lng }
+            : null,
+        fin_coords:
+          finalizacionEvent && finalizacionEvent.lat != null
+            ? { lat: finalizacionEvent.lat, lng: finalizacionEvent.lng }
+            : null,
         origen_coords:
           trayecto?.origen_lat != null
             ? { lat: trayecto.origen_lat, lng: trayecto.origen_lng }

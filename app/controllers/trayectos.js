@@ -10,6 +10,7 @@ import {
 import { UsersAPI } from "../utils/users-api.js";
 import { CAEUtils } from "../utils/cae.js";
 import { ReservaController } from "./reserva.js";
+import { PaginationUtils } from "../utils/pagination.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -126,12 +127,28 @@ function parsePreferenceValue(valueType, raw) {
 
 async function getTrayectos(req, res) {
   try {
+    const { page, limit, offset } = PaginationUtils.parsePaginationParams(req);
+    const where = {
+      status: { notIn: ["finalizado", "en curso", "cancelado"] },
+    };
+
     const trayectos = await prisma.trayecto.findMany({
-      where: { status: { notIn: ["finalizado", "en curso", "cancelado"] } },
+      where,
+      skip: offset,
+      take: limit,
     });
+    const total = await prisma.trayecto.count({ where });
 
     if (!trayectos || trayectos.length === 0) {
-      return res.status(200).send({ status: "Success", trayectos: [] });
+      return res.status(200).send({
+        status: "Success",
+        data: [],
+        pagination: PaginationUtils.buildPaginationResponse({
+          page,
+          limit,
+          total: 0,
+        }),
+      });
     }
 
     const driverIds = [...new Set(trayectos.map((t) => t.conductor))];
@@ -164,9 +181,15 @@ async function getTrayectos(req, res) {
       driverPreferences: preferencesByDriver[t.conductor] || {},
     }));
 
-    return res
-      .status(200)
-      .send({ status: "Success", trayectos: trayectosWithPreferences });
+    return res.status(200).send({
+      status: "Success",
+      data: trayectosWithPreferences,
+      pagination: PaginationUtils.buildPaginationResponse({
+        page,
+        limit,
+        total,
+      }),
+    });
   } catch (error) {
     console.error("Error en getTrayectos:", error);
     return res
@@ -806,101 +829,115 @@ async function obtenerTrayectoPorId(req, res) {
 
 async function obtenerTrayectosPorConductor(req, res) {
   const { id } = req.params;
-  const rows = await prisma.trayecto.findMany({
-    where: { conductor: id },
-  });
-  let trayectos = await Promise.all(
-    rows.map(async (trayecto) => {
-      const conductorInfo = await UsersAPI.fetchUserPublicInfo(
-        String(trayecto.conductor),
-      );
-      return {
-        ...trayecto,
-        conductor: conductorInfo?.name || "Desconocido",
-        conductor_id: trayecto.conductor,
-        img_perfil: conductorInfo?.img_perfil,
-      };
-    }),
-  );
-  const currentuserId = req.user?.id;
-  const ratedIds = await getRatedTrayectoIdsForUser(
-    currentuserId,
-    trayectos.map((t) => t.id),
-  );
-  trayectos = trayectos.map((t) => ({
-    ...t,
-    valorado: ratedIds.has(String(t.id)),
-  }));
-  return res.status(200).json(trayectos);
+  const { page, limit, offset } = PaginationUtils.parsePaginationParams(req);
+
+  try {
+    const rows = await prisma.trayecto.findMany({
+      where: { conductor: id },
+      orderBy: { hora: "desc" },
+      skip: offset,
+      take: limit,
+    });
+    const total = await prisma.trayecto.count({ where: { conductor: id } });
+
+    let trayectos = await Promise.all(
+      rows.map(async (trayecto) => {
+        const conductorInfo = await UsersAPI.fetchUserPublicInfo(
+          String(trayecto.conductor),
+        );
+        return {
+          ...trayecto,
+          conductor: conductorInfo?.name || "Desconocido",
+          conductor_id: trayecto.conductor,
+          img_perfil: conductorInfo?.img_perfil,
+        };
+      }),
+    );
+    const currentuserId = req.user?.userId ?? req.user?.id;
+    const ratedIds = await getRatedTrayectoIdsForUser(
+      currentuserId,
+      trayectos.map((t) => t.id),
+    );
+    trayectos = trayectos.map((t) => ({
+      ...t,
+      valorado: ratedIds.has(String(t.id)),
+    }));
+
+    return res.status(200).json({
+      data: trayectos,
+      pagination: PaginationUtils.buildPaginationResponse({
+        page,
+        limit,
+        total,
+      }),
+    });
+  } catch (error) {
+    console.error("Error en obtenerTrayectosPorConductor:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error obteniendo trayectos por conductor",
+    });
+  }
 }
 
 async function obtenerMisTrayectos(req, res) {
   const { userId: rawId } = req.user;
-  console.log(
-    "[obtenerMisTrayectos] Inicio — req.user keys:",
-    Object.keys(req.user),
-  );
-  console.log("[obtenerMisTrayectos] rawId:", rawId, "| tipo:", typeof rawId);
+  const { page, limit, offset } = PaginationUtils.parsePaginationParams(req);
 
   const id = String(rawId);
   if (!id || id === "undefined" || id === "null") {
-    console.error("[obtenerMisTrayectos] ID de usuario inválido:", rawId);
     return res.status(400).send({
       status: "Error",
       message: "ID de usuario inválido en el token",
     });
   }
 
-  console.log("[obtenerMisTrayectos] Obteniendo conexión a BD...");
-  console.log("[obtenerMisTrayectos] Conexión BD obtenida");
+  try {
+    const rows = await prisma.trayecto.findMany({
+      where: { conductor: id },
+      orderBy: { hora: "desc" },
+      skip: offset,
+      take: limit,
+    });
+    const total = await prisma.trayecto.count({ where: { conductor: id } });
 
-  console.log("[obtenerMisTrayectos] Consultando trayectos del conductor:", id);
-  const rows = await prisma.trayecto.findMany({
-    where: { conductor: id },
-  });
-  console.log("[obtenerMisTrayectos] Trayectos encontrados:", rows.length);
+    const myInfo = await UsersAPI.fetchUserPublicInfo(String(id));
+    const myName = myInfo?.name || "Yo";
+    const myImg = myInfo?.img_perfil;
 
-  // Obtener mi nombre e imagen desde el microservicio de usuarios
-  console.log(
-    "[obtenerMisTrayectos] Obteniendo nombre e imagen del usuario:",
-    id,
-  );
-  const myInfo = await UsersAPI.fetchUserPublicInfo(String(id));
-  const myName = myInfo?.name || "Yo";
-  const myImg = myInfo?.img_perfil;
-  console.log(
-    "[obtenerMisTrayectos] Nombre conductor:",
-    myName,
-    "| Imagen:",
-    myImg || "sin imagen",
-  );
+    const ratedIds = await getRatedTrayectoIdsForUser(
+      id,
+      rows.map((t) => t.id),
+    );
 
-  console.log(
-    "[obtenerMisTrayectos] Obteniendo IDs de trayectos ya valorados por el usuario",
-  );
-  const ratedIds = await getRatedTrayectoIdsForUser(
-    id,
-    rows.map((t) => t.id),
-  );
-  console.log("[obtenerMisTrayectos] Trayectos valorados:", [...ratedIds]);
+    const data = rows.map((t) => ({
+      ...t,
+      conductor: myName,
+      conductor_id: t.conductor,
+      img_perfil: myImg,
+      valorado: ratedIds.has(String(t.id)),
+    }));
 
-  const data = rows.map((t) => ({
-    ...t,
-    conductor: myName,
-    conductor_id: t.conductor,
-    img_perfil: myImg,
-    valorado: ratedIds.has(String(t.id)),
-  }));
-  console.log(
-    "[obtenerMisTrayectos] Respuesta enviada —",
-    data.length,
-    "trayectos",
-  );
-  return res.status(200).json(data);
+    return res.status(200).json({
+      data,
+      pagination: PaginationUtils.buildPaginationResponse({
+        page,
+        limit,
+        total,
+      }),
+    });
+  } catch (error) {
+    console.error("Error en obtenerMisTrayectos:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error obteniendo mis trayectos",
+    });
+  }
 }
 
 async function obtenerProximosTrayectos(req, res) {
   const { userId: rawId } = req.user;
+  const { page, limit, offset } = PaginationUtils.parsePaginationParams(req);
   const id = String(rawId);
   if (!id || id === "undefined" || id === "null") {
     return res.status(400).send({
@@ -909,41 +946,11 @@ async function obtenerProximosTrayectos(req, res) {
     });
   }
 
-  const now = new Date();
-  const twoDaysLater = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
+  try {
+    const now = new Date();
+    const twoDaysLater = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
 
-  console.log("[obtenerProximosTrayectos] userId:", id);
-  console.log("[obtenerProximosTrayectos] now:", now.toISOString());
-  console.log(
-    "[obtenerProximosTrayectos] twoDaysLater:",
-    twoDaysLater.toISOString(),
-  );
-
-  // Diagnostic: find all trips where the user has a non-canceled reservation
-  const userReservas = await prisma.reserva.findMany({
-    where: { user_id: id, status: { notIn: ["canceled"] } },
-    select: { id_trayecto: true, status: true },
-  });
-  console.log("[obtenerProximosTrayectos] Reservas del usuario:", userReservas);
-
-  if (userReservas.length > 0) {
-    const trayectoIds = userReservas.map((r) => r.id_trayecto);
-    const userTrips = await prisma.trayecto.findMany({
-      where: { id: { in: trayectoIds } },
-      select: { id: true, hora: true, status: true, conductor: true },
-    });
-    console.log(
-      "[obtenerProximosTrayectos] Trayectos reservados por el usuario:",
-    );
-    for (const t of userTrips) {
-      console.log(
-        `  - id=${t.id} hora=${t.hora?.toISOString()} status=${t.status} conductor=${t.conductor === id ? "SÍ" : "no"}`,
-      );
-    }
-  }
-
-  const rows = await prisma.trayecto.findMany({
-    where: {
+    const where = {
       AND: [
         {
           OR: [
@@ -963,33 +970,51 @@ async function obtenerProximosTrayectos(req, res) {
         },
         { status: { notIn: ["finalizado", "cancelado"] } },
       ],
-    },
-    orderBy: { hora: "asc" },
-  });
-
-  console.log("[obtenerProximosTrayectos] Resultados del query:", rows.length);
-
-  const conductorIds = [...new Set(rows.map((t) => String(t.conductor)))];
-  const usersList = await UsersAPI.fetchUsersByIds(conductorIds);
-  const usersMap = new Map(usersList.map((u) => [u.id, u]));
-
-  const ratedIds = await getRatedTrayectoIdsForUser(
-    id,
-    rows.map((t) => t.id),
-  );
-
-  const data = rows.map((t) => {
-    const conductorInfo = usersMap.get(String(t.conductor));
-    return {
-      ...t,
-      conductor: conductorInfo?.name || "Desconocido",
-      conductor_id: t.conductor,
-      img_perfil: conductorInfo?.img_perfil,
-      valorado: ratedIds.has(String(t.id)),
     };
-  });
 
-  return res.status(200).json(data);
+    const rows = await prisma.trayecto.findMany({
+      where,
+      orderBy: { hora: "asc" },
+      skip: offset,
+      take: limit,
+    });
+    const total = await prisma.trayecto.count({ where });
+
+    const conductorIds = [...new Set(rows.map((t) => String(t.conductor)))];
+    const usersList = await UsersAPI.fetchUsersByIds(conductorIds);
+    const usersMap = new Map(usersList.map((u) => [u.id, u]));
+
+    const ratedIds = await getRatedTrayectoIdsForUser(
+      id,
+      rows.map((t) => t.id),
+    );
+
+    const data = rows.map((t) => {
+      const conductorInfo = usersMap.get(String(t.conductor));
+      return {
+        ...t,
+        conductor: conductorInfo?.name || "Desconocido",
+        conductor_id: t.conductor,
+        img_perfil: conductorInfo?.img_perfil,
+        valorado: ratedIds.has(String(t.id)),
+      };
+    });
+
+    return res.status(200).json({
+      data,
+      pagination: PaginationUtils.buildPaginationResponse({
+        page,
+        limit,
+        total,
+      }),
+    });
+  } catch (error) {
+    console.error("Error en obtenerProximosTrayectos:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error obteniendo próximos trayectos",
+    });
+  }
 }
 
 async function iniciarTrayecto(req, res) {
@@ -2274,6 +2299,252 @@ async function obtenerEstadoTrayectoPasajero(req, res) {
   });
 }
 
+async function adminGetAllTrayectos(req, res) {
+  try {
+    const { page, limit, offset } = PaginationUtils.parsePaginationParams(req);
+    const { status, conductor, evento_id, fechaDesde, fechaHasta, search } =
+      req.query;
+
+    const where = {};
+
+    if (status) {
+      const statuses = status
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (statuses.length === 1) {
+        where.status = statuses[0];
+      } else if (statuses.length > 1) {
+        where.status = { in: statuses };
+      }
+    }
+
+    if (conductor) {
+      where.conductor = conductor;
+    }
+
+    if (evento_id) {
+      where.evento_id = evento_id;
+    }
+
+    if (fechaDesde || fechaHasta) {
+      where.hora = {};
+      if (fechaDesde) {
+        where.hora.gte = new Date(fechaDesde);
+      }
+      if (fechaHasta) {
+        where.hora.lte = new Date(fechaHasta);
+      }
+    }
+
+    if (search) {
+      where.OR = [
+        { origen: { contains: search } },
+        { destino: { contains: search } },
+      ];
+    }
+
+    const orderBy = req.query.orderBy
+      ? { [req.query.orderBy]: req.query.order || "desc" }
+      : { created_at: "desc" };
+
+    const [trayectos, total] = await Promise.all([
+      prisma.trayecto.findMany({
+        where,
+        orderBy,
+        skip: offset,
+        take: limit,
+      }),
+      prisma.trayecto.count({ where }),
+    ]);
+
+    const conductorIds = [...new Set(trayectos.map((t) => t.conductor))];
+    const usersList =
+      conductorIds.length > 0
+        ? await UsersAPI.fetchUsersByIds(conductorIds)
+        : [];
+    const usersMap = new Map(usersList.map((u) => [u.id, u]));
+
+    const data = trayectos.map((t) => {
+      const conductorInfo = usersMap.get(String(t.conductor));
+      return {
+        ...t,
+        conductor_nombre: conductorInfo?.name ?? null,
+        conductor_email: conductorInfo?.email ?? null,
+      };
+    });
+
+    return res.status(200).json({
+      status: "Success",
+      data,
+      pagination: PaginationUtils.buildPaginationResponse({
+        page,
+        limit,
+        total,
+      }),
+    });
+  } catch (error) {
+    console.error("Error en adminGetAllTrayectos:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error obteniendo trayectos (admin)",
+    });
+  }
+}
+
+async function adminGetTrayectoById(req, res) {
+  try {
+    const { id } = req.params;
+    const trayecto = await prisma.trayecto.findUnique({
+      where: { id },
+      include: {
+        Reservas: true,
+        Tramos: { orderBy: { step_order: "asc" } },
+      },
+    });
+
+    if (!trayecto) {
+      return res
+        .status(404)
+        .send({ status: "Error", message: "Trayecto no encontrado" });
+    }
+
+    const conductorInfo = await UsersAPI.fetchUserPublicInfo(
+      String(trayecto.conductor),
+    );
+
+    const eventos = await prisma.eventoTrayecto.findMany({
+      where: { id_trayecto: id },
+      include: { TipoEvento: { select: { nombre: true } } },
+      orderBy: { created_at: "asc" },
+    });
+
+    return res.status(200).json({
+      status: "Success",
+      data: {
+        ...trayecto,
+        conductor_nombre: conductorInfo?.name ?? null,
+        conductor_email: conductorInfo?.email ?? null,
+        eventos: eventos.map((e) => ({
+          id: e.id,
+          tipo: e.TipoEvento?.nombre ?? null,
+          user_id: e.user_id,
+          id_reserva: e.id_reserva,
+          lat: e.lat,
+          lng: e.lng,
+          created_at: e.created_at,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error("Error en adminGetTrayectoById:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error obteniendo trayecto (admin)",
+    });
+  }
+}
+
+async function adminUpdateTrayecto(req, res) {
+  try {
+    const { id } = req.params;
+    const existing = await prisma.trayecto.findUnique({ where: { id } });
+    if (!existing) {
+      return res
+        .status(404)
+        .send({ status: "Error", message: "Trayecto no encontrado" });
+    }
+
+    const allowedFields = [
+      "origen",
+      "destino",
+      "hora",
+      "plazas",
+      "disponible",
+      "precio",
+      "precio_conductor",
+      "conductor",
+      "vehiculo_id",
+      "routeIndex",
+      "status",
+      "origen_lat",
+      "origen_lng",
+      "destino_lat",
+      "destino_lng",
+      "evento_id",
+    ];
+
+    const updateData = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res
+        .status(400)
+        .send({ status: "Error", message: "No hay campos para actualizar" });
+    }
+
+    if (updateData.hora) {
+      updateData.hora = new Date(updateData.hora);
+    }
+
+    const updated = await prisma.trayecto.update({
+      where: { id },
+      data: updateData,
+    });
+
+    return res.status(200).json({
+      status: "Success",
+      message: "Trayecto actualizado correctamente",
+      data: updated,
+    });
+  } catch (error) {
+    console.error("Error en adminUpdateTrayecto:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error actualizando trayecto (admin)",
+    });
+  }
+}
+
+async function adminDeleteTrayecto(req, res) {
+  const { id } = req.params;
+  try {
+    const existing = await prisma.trayecto.findUnique({ where: { id } });
+    if (!existing) {
+      return res
+        .status(404)
+        .send({ status: "Error", message: "Trayecto no encontrado" });
+    }
+
+    await prisma.$transaction([
+      prisma.tramo.deleteMany({ where: { id_trayecto: id } }),
+      prisma.recorrido.deleteMany({ where: { id_trayecto: id } }),
+      prisma.eventoTrayecto.deleteMany({ where: { id_trayecto: id } }),
+      prisma.comment.deleteMany({ where: { id_trayecto: id } }),
+      prisma.infoCAEs.deleteMany({ where: { id_trayecto: id } }),
+      prisma.pago.deleteMany({ where: { id_trayecto: id } }),
+      prisma.reserva.deleteMany({ where: { id_trayecto: id } }),
+      prisma.trayecto.delete({ where: { id } }),
+    ]);
+
+    return res
+      .status(200)
+      .json({ status: "Success", message: "Trayecto eliminado correctamente" });
+  } catch (error) {
+    console.error("Error en adminDeleteTrayecto:", error);
+    return res
+      .status(500)
+      .send({
+        status: "Error",
+        message: "Error al eliminar el trayecto (admin)",
+      });
+  }
+}
+
 export const TrayectosController = {
   crearTrayecto,
   crearTrayectoEvento,
@@ -2294,4 +2565,8 @@ export const TrayectosController = {
   obtenerProximosTrayectos,
   updateLatLong,
   updateLatLongById,
+  adminGetAllTrayectos,
+  adminGetTrayectoById,
+  adminUpdateTrayecto,
+  adminDeleteTrayecto,
 };

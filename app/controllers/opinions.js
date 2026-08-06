@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { ComentarioSchema } from "../schemas/opinions.js";
 
 import { database } from "../database.js";
+import { PaginationUtils } from "../utils/pagination.js";
 
 const tableName = "comments";
 
@@ -175,31 +176,36 @@ async function addOpinion(req, res) {
 
 async function getOpinionByUserIdCommentator(req, res) {
   const { userId } = req.params;
-
-  console.log("userId de la opinión a buscar:", userId);
+  const { page, limit, offset } = PaginationUtils.parsePaginationParams(req);
 
   try {
     const connection = await database.getConnection();
 
     let opinionList = await connection.query(
-      `SELECT * FROM ${tableName} WHERE user_id_commentator = ?`,
+      `SELECT * FROM ${tableName} WHERE user_id_commentator = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [userId, limit, offset],
+    );
+    opinionList = opinionList[0];
 
+    let countResult = await connection.query(
+      `SELECT COUNT(*) as total FROM ${tableName} WHERE user_id_commentator = ?`,
       [userId],
     );
-
-    opinionList = opinionList[0];
+    const total = Number(countResult[0]?.[0]?.total ?? 0);
 
     return res.status(200).send({
       status: "Success",
-
-      opinionList,
+      data: opinionList,
+      pagination: PaginationUtils.buildPaginationResponse({
+        page,
+        limit,
+        total,
+      }),
     });
   } catch (error) {
-    console.error("Error en getOpinionByuserIdCommented:", error);
-
+    console.error("Error en getOpinionByUserIdCommentator:", error);
     return res.status(500).send({
       status: "Error",
-
       message: "Error en el servidor al obtener opiniones",
     });
   }
@@ -207,31 +213,36 @@ async function getOpinionByUserIdCommentator(req, res) {
 
 async function getOpinionByUserIdTrayect(req, res) {
   const { userId } = req.params;
-
-  console.log("userId de la opinión a buscar:", userId);
+  const { page, limit, offset } = PaginationUtils.parsePaginationParams(req);
 
   try {
     const connection = await database.getConnection();
 
     let opinionList = await connection.query(
-      `SELECT * FROM ${tableName} WHERE user_id_trayect = ?`,
+      `SELECT * FROM ${tableName} WHERE user_id_trayect = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [userId, limit, offset],
+    );
+    opinionList = opinionList[0];
 
+    let countResult = await connection.query(
+      `SELECT COUNT(*) as total FROM ${tableName} WHERE user_id_trayect = ?`,
       [userId],
     );
-
-    opinionList = opinionList[0];
+    const total = Number(countResult[0]?.[0]?.total ?? 0);
 
     return res.status(200).send({
       status: "Success",
-
-      opinionList,
+      data: opinionList,
+      pagination: PaginationUtils.buildPaginationResponse({
+        page,
+        limit,
+        total,
+      }),
     });
   } catch (error) {
-    console.error("Error en getOpinionByuserIdTrayect:", error);
-
+    console.error("Error en getOpinionByUserIdTrayect:", error);
     return res.status(500).send({
       status: "Error",
-
       message: "Error en el servidor al obtener opiniones",
     });
   }
