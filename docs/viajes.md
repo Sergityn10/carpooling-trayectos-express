@@ -1221,17 +1221,26 @@ eur = km_with_company × num_pasajeros_en_segmento × EUR_PER_PASSENGER_KM
 
 1. Al finalizar un trayecto (`POST /api/trayecto/:id/finalizar`), se crea un registro `InfoCAEs` con estado `pending`.
 2. Asíncronamente (sin bloquear la respuesta al cliente), se calculan:
-   - **km_recorridos:** distancia total desde los puntos de `Recorrido` del conductor (Haversine entre puntos consecutivos). Si no hay puntos suficientes, se usa la distancia directa origen-destino.
+   - **km_recorridos:** distancia total recorrida por el conductor, con la siguiente prioridad:
+     1. **Puntos de recorrido + eventos extremos:** Se filtran los puntos de `Recorrido` del conductor al rango temporal entre los eventos `comienzo` y `finalizacion`. Se añaden las coordenadas reales de los eventos `comienzo` y `finalizacion` como primer y último punto (si no hay un punto de recorrido cercano en tiempo). Se aplica Snap to Roads de Google Maps y se calcula la suma de distancias Haversine entre puntos consecutivos.
+     2. **Distancia directa comienzo→finalizacion:** Si no hay puntos de recorrido suficientes pero existen eventos de `comienzo` y `finalizacion` con coordenadas, se usa la distancia Haversine directa entre ambos puntos reales.
+     3. **Distancia planificada origen→destino:** Último recurso, si no hay ni puntos de recorrido ni eventos con coordenadas. Se advierte en log que puede no ser la distancia real.
    - **km_with_company:** suma de los segmentos donde había al menos un pasajero a bordo (determinado por eventos de `recogida` y `llegada_destino`).
    - **kwh_generated:** suma por segmento de `km_segmento × pasajeros_en_segmento × KWH_PER_PASSENGER_KM`.
    - **eur_generated:** suma por segmento de `km_segmento × pasajeros_en_segmento × EUR_PER_PASSENGER_KM`.
 3. Se detectan y registran en log todos los eventos del trayecto (`comienzo`, `recogida`, `llegada_destino`, `finalizacion`) con sus coordenadas y timestamps reales.
-4. Al completar el cálculo, el estado pasa a `in_review` (en revisión).
-5. Un administrador revisa el informe y lo aprueba mediante `PATCH /api/cae/:id/approve`, cambiando el estado a `completed`.
+4. Se validan los datos de calidad:
+   - Si el trayecto finalizó a más de 2 km del destino planificado, se advierte y se usan las coordenadas reales de finalización.
+   - Si hay pocos puntos de recorrido (< 2), se advierte que el cálculo puede no ser preciso.
+   - Si se filtran puntos fuera del rango temporal del trayecto, se registra cuántos se excluyeron.
+5. Al completar el cálculo, el estado pasa a `in_review` (en revisión).
+6. Un administrador revisa el informe y lo aprueba mediante `PATCH /api/cae/:id/approve`, cambiando el estado a `completed`.
 
 > **Nota:** El cálculo es asíncrono y no bloquea la finalización del trayecto. Si hay un error, el informe queda en estado `pending`.
 
 > **Eventos del trayecto en el CAE:** El informe CAE incluye todos los eventos del ciclo de vida del trayecto: `comienzo` (inicio real), `recogida` (confirmación de pasajero), `llegada_destino` (fin de pasajero) y `finalizacion` (fin del trayecto). Cada evento se registra con coordenadas GPS y timestamp, permitiendo verificar el recorrido completo.
+
+> **Gestión de trayectos incompletos o con errores:** Si un trayecto termina antes de llegar al destino planificado, el cálculo usa las coordenadas reales del evento `finalizacion` en lugar del destino planificado. Si faltan puntos de recorrido GPS, el sistema recurre a la distancia entre los eventos `comienzo` y `finalizacion`. Solo si no hay ni recorrido ni eventos con coordenadas, se usa la distancia planificada origen→destino (con advertencia en log).
 
 ### Endpoint de balance CAE
 

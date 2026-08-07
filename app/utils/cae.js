@@ -88,56 +88,6 @@ async function generateInfoCAE(trayectoId) {
     },
   });
 
-  const conductorPointsRaw = await prisma.recorrido.findMany({
-    where: { id_trayecto: trayectoId, user_id: trayecto.conductor },
-    orderBy: { created_at: "asc" },
-    select: { lat: true, lng: true, created_at: true },
-  });
-
-  let conductorPoints = conductorPointsRaw;
-  if (conductorPointsRaw.length >= 2) {
-    try {
-      console.log(
-        `[CAE] Snap to Roads para ${conductorPointsRaw.length} puntos del trayecto ${trayectoId}`,
-      );
-      const snappedCoords = await GoogleMapsProvider.snapToRoads(
-        conductorPointsRaw.map((p) => ({ lat: p.lat, lng: p.lng })),
-      );
-
-      if (snappedCoords.length === conductorPointsRaw.length) {
-        conductorPoints = conductorPointsRaw.map((p, i) => ({
-          lat: snappedCoords[i].lat,
-          lng: snappedCoords[i].lng,
-          created_at: p.created_at,
-        }));
-        console.log(
-          `[CAE] Snap to Roads completado: ${snappedCoords.length} puntos ajustados a carretera`,
-        );
-      } else {
-        console.warn(
-          `[CAE] Snap to Roads devolvió ${snappedCoords.length} puntos (esperados ${conductorPointsRaw.length}), usando coordenadas originales`,
-        );
-      }
-    } catch (e) {
-      console.warn(
-        `[CAE] Error en Snap to Roads, usando coordenadas originales:`,
-        e.message,
-      );
-    }
-  }
-
-  let kmRecorridos = 0;
-  if (conductorPoints.length >= 2) {
-    kmRecorridos = totalKmFromPoints(conductorPoints);
-  } else if (trayecto.origen_lat != null && trayecto.destino_lat != null) {
-    kmRecorridos = haversineKm(
-      trayecto.origen_lat,
-      trayecto.origen_lng,
-      trayecto.destino_lat,
-      trayecto.destino_lng,
-    );
-  }
-
   const eventos = await prisma.eventoTrayecto.findMany({
     where: { id_trayecto: trayectoId },
     include: { TipoEvento: { select: { nombre: true } } },
@@ -177,6 +127,173 @@ async function generateInfoCAE(trayectoId) {
   if (finalizacionEvent) {
     console.log(
       `[CAE] Fin real del trayecto: ${finalizacionEvent.created_at.toISOString()} (lat=${finalizacionEvent.lat}, lng=${finalizacionEvent.lng})`,
+    );
+  }
+
+  // Determinar ventana temporal real del trayecto usando eventos
+  const tripStartTime = comienzoEvent ? comienzoEvent.created_at : null;
+  const tripEndTime = finalizacionEvent ? finalizacionEvent.created_at : null;
+
+  // Validar si el trayecto terminó lejos del destino planificado
+  if (
+    finalizacionEvent &&
+    finalizacionEvent.lat != null &&
+    trayecto.destino_lat != null
+  ) {
+    const distToDest = haversineKm(
+      finalizacionEvent.lat,
+      finalizacionEvent.lng,
+      trayecto.destino_lat,
+      trayecto.destino_lng,
+    );
+    if (distToDest > 2) {
+      console.warn(
+        `[CAE] ⚠️ El trayecto ${trayectoId} finalizó a ${distToDest.toFixed(2)} km del destino planificado. ` +
+          `Usando coordenadas reales de finalización para el cálculo.`,
+      );
+    }
+  }
+
+  const conductorPointsRaw = await prisma.recorrido.findMany({
+    where: { id_trayecto: trayectoId, user_id: trayecto.conductor },
+    orderBy: { created_at: "asc" },
+    select: { lat: true, lng: true, created_at: true },
+  });
+
+  // Filtrar puntos de recorrido al rango temporal real del trayecto
+  let filteredPoints = conductorPointsRaw;
+  if (tripStartTime || tripEndTime) {
+    filteredPoints = conductorPointsRaw.filter((p) => {
+      if (tripStartTime && p.created_at < tripStartTime) return false;
+      if (tripEndTime && p.created_at > tripEndTime) return false;
+      return true;
+    });
+    if (filteredPoints.length < conductorPointsRaw.length) {
+      console.log(
+        `[CAE] Filtrados ${conductorPointsRaw.length - filteredPoints.length} puntos de recorrido fuera del rango temporal del trayecto ` +
+          `(${filteredPoints.length}/${conductorPointsRaw.length} puntos válidos)`,
+      );
+    }
+  }
+
+  // Construir lista de puntos del conductor: añadir coords de comienzo/finalizacion como extremos reales
+  let conductorPoints = filteredPoints;
+  if (comienzoEvent && comienzoEvent.lat != null) {
+    const startPoint = {
+      lat: comienzoEvent.lat,
+      lng: comienzoEvent.lng,
+      created_at: comienzoEvent.created_at,
+    };
+    // Solo añadir si no hay un punto de recorrido muy cercano en tiempo
+    const hasNearStart =
+      filteredPoints.length > 0 &&
+      Math.abs(
+        filteredPoints[0].created_at.getTime() -
+          comienzoEvent.created_at.getTime(),
+      ) < 30000;
+    if (!hasNearStart) {
+      conductorPoints = [startPoint, ...conductorPoints];
+    }
+  }
+  if (finalizacionEvent && finalizacionEvent.lat != null) {
+    const endPoint = {
+      lat: finalizacionEvent.lat,
+      lng: finalizacionEvent.lng,
+      created_at: finalizacionEvent.created_at,
+    };
+    const hasNearEnd =
+      filteredPoints.length > 0 &&
+      Math.abs(
+        filteredPoints[filteredPoints.length - 1].created_at.getTime() -
+          finalizacionEvent.created_at.getTime(),
+      ) < 30000;
+    if (!hasNearEnd) {
+      conductorPoints = [...conductorPoints, endPoint];
+    }
+  }
+
+  // Snap to Roads si hay suficientes puntos
+  if (conductorPoints.length >= 2) {
+    try {
+      console.log(
+        `[CAE] Snap to Roads para ${conductorPoints.length} puntos del trayecto ${trayectoId}`,
+      );
+      const snappedCoords = await GoogleMapsProvider.snapToRoads(
+        conductorPoints.map((p) => ({ lat: p.lat, lng: p.lng })),
+      );
+
+      if (snappedCoords.length === conductorPoints.length) {
+        conductorPoints = conductorPoints.map((p, i) => ({
+          lat: snappedCoords[i].lat,
+          lng: snappedCoords[i].lng,
+          created_at: p.created_at,
+        }));
+        console.log(
+          `[CAE] Snap to Roads completado: ${snappedCoords.length} puntos ajustados a carretera`,
+        );
+      } else {
+        console.warn(
+          `[CAE] Snap to Roads devolvió ${snappedCoords.length} puntos (esperados ${conductorPoints.length}), usando coordenadas originales`,
+        );
+      }
+    } catch (e) {
+      console.warn(
+        `[CAE] Error en Snap to Roads, usando coordenadas originales:`,
+        e.message,
+      );
+    }
+  }
+
+  // Calcular km_recorridos con prioridad:
+  // 1. Suma de segmentos entre puntos reales (recorrido + eventos extremos)
+  // 2. Haversine entre coords de comienzo y finalizacion (si hay eventos pero pocos puntos)
+  // 3. Haversine entre origen y destino planificados (último recurso)
+  let kmRecorridos = 0;
+  let kmCalculationMethod = "none";
+
+  if (conductorPoints.length >= 2) {
+    kmRecorridos = totalKmFromPoints(conductorPoints);
+    kmCalculationMethod = "recorrido+eventos";
+  } else if (
+    comienzoEvent &&
+    comienzoEvent.lat != null &&
+    finalizacionEvent &&
+    finalizacionEvent.lat != null
+  ) {
+    kmRecorridos = haversineKm(
+      comienzoEvent.lat,
+      comienzoEvent.lng,
+      finalizacionEvent.lat,
+      finalizacionEvent.lng,
+    );
+    kmCalculationMethod = "comienzo→finalizacion";
+    console.warn(
+      `[CAE] ⚠️ Sin puntos de recorrido suficientes para trayecto ${trayectoId}. ` +
+        `Usando distancia directa comienzo→finalizacion: ${kmRecorridos.toFixed(2)} km`,
+    );
+  } else if (trayecto.origen_lat != null && trayecto.destino_lat != null) {
+    kmRecorridos = haversineKm(
+      trayecto.origen_lat,
+      trayecto.origen_lng,
+      trayecto.destino_lat,
+      trayecto.destino_lng,
+    );
+    kmCalculationMethod = "origen→destino (planificado)";
+    console.warn(
+      `[CAE] ⚠️ Sin puntos de recorrido ni eventos de comienzo/finalizacion para trayecto ${trayectoId}. ` +
+        `Usando distancia planificada origen→destino: ${kmRecorridos.toFixed(2)} km (puede no ser real)`,
+    );
+  }
+
+  console.log(
+    `[CAE] km_recorridos calculados (${kmCalculationMethod}): ${kmRecorridos.toFixed(2)} km`,
+  );
+
+  // Advertir si hay muy pocos puntos de recorrido
+  if (filteredPoints.length < 2 && conductorPoints.length < 2) {
+    console.warn(
+      `[CAE] ⚠️ Trayecto ${trayectoId}: solo ${filteredPoints.length} punto(s) de recorrido del conductor. ` +
+        `El cálculo puede no ser preciso. Considere revisar el tracking GPS.`,
     );
   }
 
@@ -222,8 +339,13 @@ async function generateInfoCAE(trayectoId) {
       }
     }
   } else {
+    // Fallback: usar kmRecorridos (que ya prioriza comienzo→finalizacion sobre origen→destino)
     const activePassengers = passengerSegments.filter(
-      (seg) => !seg.dropoffTime || seg.dropoffTime > trayecto.hora,
+      (seg) =>
+        !seg.dropoffTime ||
+        (tripEndTime
+          ? seg.dropoffTime > tripEndTime
+          : seg.dropoffTime > trayecto.hora),
     );
     if (activePassengers.length > 0) {
       kmWithCompany = kmRecorridos;
