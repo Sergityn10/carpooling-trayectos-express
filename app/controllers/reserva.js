@@ -11,6 +11,7 @@ import {
   TRIP_OUTCOME,
   TRAYECTO_STATUS,
 } from "../constants/statuses.js";
+import { RabbitMQ } from "../rabbitmq/connection.js";
 
 import Stripe from "stripe";
 dotenv.config();
@@ -357,60 +358,43 @@ async function addReserva(req, res) {
       .send({ status: "Error", message: "MESSAGES_URL no configurado" });
   }
 
-  // Crear la sesión de pago en Stripe (solo si el trayecto no es gratuito)
-  let checkout_session = null;
-  if (!isFree) {
-    const comision = trayecto.precio_conductor * PLATFORM_COMMISSION_PERCENT;
-    const netoConComision = trayecto.precio_conductor + comision;
-    let totalAmount = Math.round(netoConComision * 100);
-    try {
-      checkout_session = await fetch(
-        `${USUARIOS_URL}/api/payment/payment-intent/checkout`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            Cookie: cookieHeaderValue,
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            amount: totalAmount,
-            recipient_user_id: String(trayecto.conductor),
-            currency: "eur",
-            description:
-              "Reserva de trayecto: " +
-              trayecto_id +
-              " desde " +
-              trayecto.origen +
-              " hasta " +
-              trayecto.destino,
-            success_url: frontend_url + "/trayecto/" + trayecto_id,
-            cancel_url: frontend_url + "/trayecto/" + trayecto_id,
-            trayecto_id,
-            id_reserva: duplicado ? reserva.id_reserva : reservaId,
-          }),
-        },
-      ).then(async (response) => {
-        if (!response.ok) {
-          const errBody = await response.json().catch(() => null);
-          const err = new Error(
-            errBody?.message ?? "Error al crear el PaymentIntent en Stripe",
-          );
-          err.status = response.status;
-          err.code = errBody?.code;
-          throw err;
-        }
-        return await response.json();
-      });
-    } catch (error) {
-      const status = error.status || 400;
-      return res.status(status).send({
-        status: "Error",
-        code: error.code,
-        message: error.message,
-      });
-    }
+  // Publicar evento de reserva creada via RabbitMQ
+  const comision = trayecto.precio_conductor * PLATFORM_COMMISSION_PERCENT;
+  const netoConComision = trayecto.precio_conductor + comision;
+  const totalAmount = Math.round(netoConComision * 100);
+
+  if (isFree) {
+    RabbitMQ.publishEvent("reserva.created.free", {
+      id_reserva: duplicado ? reserva.id_reserva : reservaId,
+      user_id: userId,
+      trayecto_id,
+      conductor_id: String(trayecto.conductor),
+      status: RESERVA_STATUS.COMPLETED,
+      is_free: true,
+    });
+  } else {
+    RabbitMQ.publishEvent("reserva.created.payment_required", {
+      id_reserva: duplicado ? reserva.id_reserva : reservaId,
+      user_id: userId,
+      trayecto_id,
+      conductor_id: String(trayecto.conductor),
+      status: RESERVA_STATUS.PENDING,
+      is_free: false,
+      payment: {
+        amount: totalAmount,
+        currency: "eur",
+        recipient_user_id: String(trayecto.conductor),
+        description:
+          "Reserva de trayecto: " +
+          trayecto_id +
+          " desde " +
+          trayecto.origen +
+          " hasta " +
+          trayecto.destino,
+        success_url: frontend_url + "/trayecto/" + trayecto_id,
+        cancel_url: frontend_url + "/trayecto/" + trayecto_id,
+      },
+    });
   }
 
   // Unirse al chat del trayecto
@@ -503,19 +487,6 @@ async function addReserva(req, res) {
   }
 
   reservaId = duplicado ? reserva.id_reserva : reservaId;
-  if (!isFree) {
-    try {
-      await prisma.reserva.update({
-        where: { id_reserva: reservaId },
-        data: { stripe_checkout_session_id: checkout_session.id },
-      });
-    } catch (e) {
-      console.error(
-        "Error guardando stripe_checkout_session_id en reserva:",
-        e,
-      );
-    }
-  }
 
   if (!duplicado) {
     try {
@@ -563,15 +534,13 @@ async function addReserva(req, res) {
     user_id: userId,
     conductorName,
     trayecto_id,
-    stripe_checkout_session_id: isFree ? null : checkout_session.id,
   };
   return res.status(201).send({
     status: "Success",
     message: isFree
       ? "Reserva creada y confirmada correctamente (trayecto gratuito)"
-      : "Reserva creada correctamente",
+      : "Reserva creada correctamente. Pendiente de pago.",
     reserva: newReserva,
-    stripe_url: isFree ? null : checkout_session.url,
   });
 }
 
@@ -1133,7 +1102,7 @@ async function retomarPagoReserva(req, res) {
     });
   }
 
-  if (reserva.status !== "pending") {
+  if (reserva.status !== RESERVA_STATUS.PENDING) {
     return res.status(400).send({
       status: "Error",
       message: "Solo se puede retomar el pago de reservas pendientes",
@@ -1149,126 +1118,36 @@ async function retomarPagoReserva(req, res) {
     });
   }
 
-  const { token, headers } = getAuthHeaders(req);
-  if (!token) {
-    return res.status(401).send({
-      status: "Error",
-      message: "No se proporcionó un token de acceso",
-    });
-  }
-
-  const cookieHeaderValue = `access_token=${token}`;
   const comisionRetomar =
     trayecto.precio_conductor * PLATFORM_COMMISSION_PERCENT;
   const netoConComisionRetomar = trayecto.precio_conductor + comisionRetomar;
-  let totalAmount = Math.round(netoConComisionRetomar * 100);
+  const totalAmount = Math.round(netoConComisionRetomar * 100);
 
-  let checkout_session = null;
-  let usedFallback = false;
-
-  // 1) Intentar retomar la sesión de pago existente
-  try {
-    checkout_session = await fetch(
-      `${USUARIOS_URL}/api/payment/payment-intent/resume`,
-      {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: cookieHeaderValue,
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          id_reserva: reserva.id_reserva,
-          return_url: return_url || undefined,
-        }),
-      },
-    ).then(async (response) => {
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => null);
-        const err = new Error(
-          errBody?.message ?? "Error al retomar el pago en Stripe",
-        );
-        err.status = response.status;
-        err.code = errBody?.code;
-        throw err;
-      }
-      return await response.json();
-    });
-  } catch (resumeError) {
-    console.warn(
-      "No se pudo retomar la sesión de pago, generando una nueva:",
-      resumeError.message,
-    );
-
-    // 2) Fallback: crear una nueva sesión de checkout
-    try {
-      checkout_session = await fetch(
-        `${USUARIOS_URL}/api/payment/payment-intent/checkout`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            Cookie: cookieHeaderValue,
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            amount: totalAmount,
-            recipient_user_id: String(trayecto.conductor),
-            currency: "eur",
-            description:
-              "Reserva de trayecto: " +
-              reserva.id_trayecto +
-              " desde " +
-              trayecto.origen +
-              " hasta " +
-              trayecto.destino,
-            success_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
-            cancel_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
-            trayecto_id: reserva.id_trayecto,
-            id_reserva: reserva.id_reserva,
-          }),
-        },
-      ).then(async (response) => {
-        if (!response.ok) {
-          const errBody = await response.json().catch(() => null);
-          const err = new Error(
-            errBody?.message ?? "Error al crear el PaymentIntent en Stripe",
-          );
-          err.status = response.status;
-          err.code = errBody?.code;
-          throw err;
-        }
-        return await response.json();
-      });
-      usedFallback = true;
-    } catch (checkoutError) {
-      const status = checkoutError.status || 400;
-      return res.status(status).send({
-        status: "Error",
-        code: checkoutError.code,
-        message: checkoutError.message,
-      });
-    }
-  }
-
-  try {
-    await prisma.reserva.update({
-      where: { id_reserva: reserva.id_reserva },
-      data: { stripe_checkout_session_id: checkout_session.id },
-    });
-  } catch (e) {
-    console.error("Error guardando stripe_checkout_session_id en reserva:", e);
-  }
+  RabbitMQ.publishEvent("reserva.payment.resume", {
+    id_reserva: reserva.id_reserva,
+    user_id: userId,
+    trayecto_id: reserva.id_trayecto,
+    conductor_id: String(trayecto.conductor),
+    return_url: return_url || undefined,
+    payment: {
+      amount: totalAmount,
+      currency: "eur",
+      recipient_user_id: String(trayecto.conductor),
+      description:
+        "Reserva de trayecto: " +
+        reserva.id_trayecto +
+        " desde " +
+        trayecto.origen +
+        " hasta " +
+        trayecto.destino,
+      success_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
+      cancel_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
+    },
+  });
 
   return res.status(200).send({
     status: "Success",
-    message: usedFallback
-      ? "Nueva sesión de pago generada correctamente"
-      : "Pago retomado correctamente",
-    stripe_url: checkout_session.url,
-    stripe_checkout_session_id: checkout_session.id,
+    message: "Evento de retomar pago publicado correctamente",
   });
 }
 
@@ -1502,140 +1381,10 @@ async function reservaQR(req, res) {
   });
 
   const isFree = Number(trayecto.precio_conductor) === 0;
-  const { token, headers } = getAuthHeaders(req);
-  const cookieHeaderValue = `access_token=${token}`;
 
-  let checkoutSession = null;
-  let paymentConfirmed = false;
-  let stripePaymentIntentId = null;
-  let stripeCheckoutSessionId = null;
-
-  if (!isFree) {
-    if (!token) {
-      return res.status(401).send({
-        status: "Error",
-        message: "No se proporcionó token de acceso",
-      });
-    }
-
-    const comision =
-      Number(trayecto.precio_conductor) * PLATFORM_COMMISSION_PERCENT;
-    const netoConComision = Number(trayecto.precio_conductor) + comision;
-    const totalAmount = Math.round(netoConComision * 100);
-
-    try {
-      checkoutSession = await fetch(
-        `${USUARIOS_URL}/api/payment/payment-intent/checkout`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            Cookie: cookieHeaderValue,
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            amount: totalAmount,
-            recipient_user_id: String(trayecto.conductor),
-            currency: "eur",
-            description:
-              "Reserva QR: " +
-              trayecto_id +
-              " desde " +
-              trayecto.origen +
-              " hasta " +
-              trayecto.destino,
-            success_url: frontend_url + "/trayecto/" + trayecto_id,
-            cancel_url: frontend_url + "/trayecto/" + trayecto_id,
-            trayecto_id,
-            id_reserva: existing?.id_reserva || undefined,
-          }),
-        },
-      ).then(async (response) => {
-        if (!response.ok) {
-          const errBody = await response.json().catch(() => null);
-          const err = new Error(
-            errBody?.message ?? "Error al crear el PaymentIntent en Stripe",
-          );
-          err.status = response.status;
-          err.code = errBody?.code;
-          throw err;
-        }
-        return await response.json();
-      });
-
-      stripeCheckoutSessionId = checkoutSession.id;
-      const paymentIntentId = checkoutSession.payment_intent;
-
-      if (paymentIntentId) {
-        try {
-          const customerRes = await fetch(
-            `${USUARIOS_URL}/api/payment/stripe-customer`,
-            {
-              method: "GET",
-              credentials: "include",
-              headers: {
-                "Content-Type": "application/json",
-                Cookie: cookieHeaderValue,
-                Authorization: `Bearer ${token}`,
-              },
-            },
-          );
-
-          if (customerRes.ok) {
-            const customerBody = await customerRes.json();
-            const customerId = customerBody?.customer?.id;
-
-            if (customerId) {
-              const paymentMethods = await stripe.paymentMethods.list({
-                customer: customerId,
-                type: "card",
-              });
-
-              if (paymentMethods.data.length > 0) {
-                const pi = await stripe.paymentIntents.confirm(
-                  paymentIntentId,
-                  {
-                    payment_method: paymentMethods.data[0].id,
-                    off_session: true,
-                  },
-                );
-
-                if (pi.status === "requires_capture") {
-                  const captured =
-                    await stripe.paymentIntents.capture(paymentIntentId);
-                  if (captured.status === "succeeded") {
-                    paymentConfirmed = true;
-                    stripePaymentIntentId = paymentIntentId;
-                  }
-                } else if (pi.status === "succeeded") {
-                  paymentConfirmed = true;
-                  stripePaymentIntentId = paymentIntentId;
-                }
-              }
-            }
-          }
-        } catch (confirmError) {
-          console.error(
-            "Error confirmando PaymentIntent directamente:",
-            confirmError.message,
-          );
-        }
-      }
-    } catch (error) {
-      const status = error.status || 400;
-      return res.status(status).send({
-        status: "Error",
-        code: error.code,
-        message: error.message,
-      });
-    }
-  }
-
-  const reservaStatus =
-    isFree || paymentConfirmed
-      ? RESERVA_STATUS.COMPLETED
-      : RESERVA_STATUS.PENDING;
+  const reservaStatus = isFree
+    ? RESERVA_STATUS.COMPLETED
+    : RESERVA_STATUS.PENDING;
   let reservaId;
 
   try {
@@ -1647,12 +1396,6 @@ async function reservaQR(req, res) {
             where: { id_reserva: reservaId },
             data: {
               status: reservaStatus,
-              ...(stripeCheckoutSessionId && {
-                stripe_checkout_session_id: stripeCheckoutSessionId,
-              }),
-              ...(stripePaymentIntentId && {
-                stripe_payment_intent_id: stripePaymentIntentId,
-              }),
             },
           });
         } else {
@@ -1666,12 +1409,6 @@ async function reservaQR(req, res) {
             user_id: userId,
             id_trayecto: trayecto_id,
             status: reservaStatus,
-            ...(stripeCheckoutSessionId && {
-              stripe_checkout_session_id: stripeCheckoutSessionId,
-            }),
-            ...(stripePaymentIntentId && {
-              stripe_payment_intent_id: stripePaymentIntentId,
-            }),
           },
         });
       }
@@ -1699,7 +1436,7 @@ async function reservaQR(req, res) {
         });
       }
 
-      if (isFree || paymentConfirmed) {
+      if (isFree) {
         const tipoEventoRecogida = await tx.tipoEvento.findUnique({
           where: { nombre: "recogida" },
         });
@@ -1726,19 +1463,56 @@ async function reservaQR(req, res) {
       .send({ status: "Error", message: "Error al procesar la reserva QR" });
   }
 
-  if (!isFree && !paymentConfirmed && checkoutSession?.url) {
+  if (isFree) {
+    RabbitMQ.publishEvent("reserva.created.free", {
+      id_reserva: reservaId,
+      user_id: userId,
+      trayecto_id,
+      conductor_id: String(trayecto.conductor),
+      status: RESERVA_STATUS.COMPLETED,
+      is_free: true,
+    });
+  } else {
+    const comision =
+      Number(trayecto.precio_conductor) * PLATFORM_COMMISSION_PERCENT;
+    const netoConComision = Number(trayecto.precio_conductor) + comision;
+    const totalAmount = Math.round(netoConComision * 100);
+
+    RabbitMQ.publishEvent("reserva.created.payment_required", {
+      id_reserva: reservaId,
+      user_id: userId,
+      trayecto_id,
+      conductor_id: String(trayecto.conductor),
+      status: RESERVA_STATUS.PENDING,
+      is_free: false,
+      payment: {
+        amount: totalAmount,
+        currency: "eur",
+        recipient_user_id: String(trayecto.conductor),
+        description:
+          "Reserva QR: " +
+          trayecto_id +
+          " desde " +
+          trayecto.origen +
+          " hasta " +
+          trayecto.destino,
+        success_url: frontend_url + "/trayecto/" + trayecto_id,
+        cancel_url: frontend_url + "/trayecto/" + trayecto_id,
+      },
+    });
+  }
+
+  if (!isFree) {
     return res.status(201).send({
       status: "Success",
       message:
         "Reserva creada en estado pendiente. Se requiere completar el pago.",
       requires_payment: true,
-      stripe_url: checkoutSession.url,
-      stripe_checkout_session_id: stripeCheckoutSessionId,
       reserva: {
         id: reservaId,
         user_id: userId,
         trayecto_id,
-        status: "pending",
+        status: RESERVA_STATUS.PENDING,
       },
     });
   }

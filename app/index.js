@@ -21,6 +21,7 @@ import {
 import { OilPriceProvider } from "./providers/precio-oil.js";
 import { CAEUtils } from "./utils/cae.js";
 import { AdminController } from "./controllers/admin.js";
+import { startRabbitMQ } from "./rabbitmq/index.js";
 
 const app = express();
 app.set("etag", false);
@@ -42,6 +43,8 @@ startTrayectoSoonReminderCron({
 startTrayectoChatCleanupCron({
   schedule: process.env.TRAYECTO_CHAT_CLEANUP_CRON_SCHEDULE || "0 3 * * *",
 });
+
+startRabbitMQ();
 
 let port = process.env.PORT || 4001;
 //Configuracion del puerto del servidor
