@@ -21,7 +21,11 @@ async function addOpinion(req, res) {
   const { user_id_commentator, user_id_trayect, trayecto_id, opinion, rating } =
     validation.data;
 
-  if (req.user?.id && String(req.user.id) !== String(user_id_commentator)) {
+  const authenticatedUserId = req.user?.userId ?? req.user?.id;
+  if (
+    authenticatedUserId &&
+    String(authenticatedUserId) !== String(user_id_commentator)
+  ) {
     return res.status(401).send({
       status: "Error",
 
@@ -51,7 +55,8 @@ async function addOpinion(req, res) {
 
     const trayecto = trayectoRows[0];
 
-    const isConductor = String(trayecto.conductor) === String(req.user.id);
+    const isConductor =
+      String(trayecto.conductor) === String(authenticatedUserId);
 
     const [reservaRows] = await connection.query(
       "SELECT id_reserva FROM reservas WHERE user_id = ? AND id_trayecto = ? AND status = 'completed' LIMIT 1",
@@ -66,7 +71,7 @@ async function addOpinion(req, res) {
         status: "Error",
 
         message:
-          "Para opinar debes haber realizado una reserva (pagada) de este trayecto",
+          "Para opinar debes ser pasajero (con reserva completada) o conductor de este trayecto",
       });
     }
 
@@ -82,6 +87,14 @@ async function addOpinion(req, res) {
           status: "Error",
 
           message: "El pasajero no pertenece a este trayecto",
+        });
+      }
+    } else if (isPasajero) {
+      if (String(user_id_trayect) !== String(trayecto.conductor)) {
+        return res.status(403).send({
+          status: "Error",
+
+          message: "Solo puedes opinar sobre el conductor del trayecto",
         });
       }
     }

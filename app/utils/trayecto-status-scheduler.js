@@ -1,6 +1,7 @@
 import { database } from "../database.js";
 import { UsersAPI } from "../utils/users-api.js";
 import { NotificationsAPI } from "./notifications-api.js";
+import { TRAYECTO_STATUS, RESERVA_STATUS } from "../constants/statuses.js";
 
 async function getUserEmailById(userId) {
   if (!userId) return null;
@@ -9,7 +10,7 @@ async function getUserEmailById(userId) {
 
 async function notifyTrayectoEnCurso(connection, trayecto) {
   const [reservas] = await connection.query(
-    "SELECT DISTINCT user_id FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
+    `SELECT DISTINCT user_id FROM reservas WHERE id_trayecto = ? AND status != '${RESERVA_STATUS.CANCELED}'`,
     [trayecto.id],
   );
 
@@ -92,7 +93,7 @@ async function notifyTrayectoEnCurso(connection, trayecto) {
 
 async function notifyTrayectoFinalizado(connection, trayecto) {
   const [reservas] = await connection.query(
-    "SELECT DISTINCT user_id FROM reservas WHERE id_trayecto = ? AND status != 'canceled'",
+    `SELECT DISTINCT user_id FROM reservas WHERE id_trayecto = ? AND status != '${RESERVA_STATUS.CANCELED}'`,
     [trayecto.id],
   );
 
@@ -179,12 +180,12 @@ async function tick() {
   const connection = await database.getConnection();
 
   const [toStart] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'programado' AND hora <= NOW()",
+    `SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = '${TRAYECTO_STATUS.PROGRAMADO}' AND hora <= NOW()`,
   );
 
   for (const trayecto of toStart ?? []) {
     const [result] = await connection.query(
-      "UPDATE trayectos SET status = 'en curso' WHERE id = ? AND status = 'programado'",
+      `UPDATE trayectos SET status = '${TRAYECTO_STATUS.EN_CURSO}' WHERE id = ? AND status = '${TRAYECTO_STATUS.PROGRAMADO}'`,
       [trayecto.id],
     );
 
@@ -198,12 +199,12 @@ async function tick() {
   }
 
   const [toFinalize] = await connection.query(
-    "SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = 'en curso' AND DATE_ADD(hora, INTERVAL 2 DAY) <= NOW()",
+    `SELECT id, origen, destino, hora, conductor FROM trayectos WHERE status = '${TRAYECTO_STATUS.EN_CURSO}' AND DATE_ADD(hora, INTERVAL 2 DAY) <= NOW()`,
   );
 
   for (const trayecto of toFinalize ?? []) {
     const [result] = await connection.query(
-      "UPDATE trayectos SET status = 'finalizado' WHERE id = ? AND status = 'en curso'",
+      `UPDATE trayectos SET status = '${TRAYECTO_STATUS.FINALIZADO}' WHERE id = ? AND status = '${TRAYECTO_STATUS.EN_CURSO}'`,
       [trayecto.id],
     );
 

@@ -351,3 +351,155 @@ En todos los casos se decrementa la disponibilidad del trayecto y se crea el eve
 - `401` — No autenticado.
 - `404` — Trayecto no encontrado.
 - `500` — Error al procesar la transacción (reserva, evento o disponibilidad).
+
+---
+
+### 10. Estadísticas de usuario
+
+```
+GET /api/reserva/stats/:userId
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Devuelve un resumen agregado de la actividad del usuario: trayectos como conductor, reservas como pasajero, comentarios realizados y recibidos, ganancias totales, pasajeros transportados y métricas CAE (km, kWh, EUR). Solo el propio usuario o un admin pueden consultar estas estadísticas.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción                |
+| --------- | ------------- | -------------------------- |
+| `userId`  | string (UUID) | ID del usuario a consultar |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "data": {
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "trayectos": {
+      "total_como_conductor": 25,
+      "finalizados": 18,
+      "activos": 5,
+      "plazas_ofrecidas": 100
+    },
+    "reservas": {
+      "total_como_pasajero": 12,
+      "completadas": 8,
+      "pendientes": 2,
+      "canceladas": 2
+    },
+    "comentarios": {
+      "realizados": 7,
+      "recibidos": 15,
+      "rating_promedio": 8.5
+    },
+    "economia": {
+      "total_ganado": 245.50,
+      "pasajeros_transportados": 42,
+      "kwh_generados": 580.2,
+      "eur_generados_kwh": 120.75
+    },
+    "cae": {
+      "km_recorridos": 3200.5,
+      "kwh_generados": 580.2,
+      "eur_generados": 120.75
+    }
+  }
+}
+```
+
+**Campos de la respuesta:**
+
+| Campo                              | Tipo        | Descripción                                                                  |
+| ---------------------------------- | ----------- | ---------------------------------------------------------------------------- |
+| `trayectos.total_como_conductor`   | Int         | Total de trayectos creados como conductor (todos los estados)                |
+| `trayectos.finalizados`            | Int         | Trayectos finalizados como conductor                                         |
+| `trayectos.activos`                | Int         | Trayectos no finalizados ni cancelados como conductor                        |
+| `trayectos.plazas_ofrecidas`       | Int         | Suma de plazas ofertadas en todos sus trayectos                              |
+| `reservas.total_como_pasajero`     | Int         | Total de reservas como pasajero (todos los estados)                          |
+| `reservas.completadas`             | Int         | Reservas con status `completed`                                              |
+| `reservas.pendientes`              | Int         | Reservas con status `pending`                                                |
+| `reservas.canceladas`              | Int         | Reservas con status `canceled`                                               |
+| `comentarios.realizados`           | Int         | Comentarios escritos por el usuario                                          |
+| `comentarios.recibidos`            | Int         | Comentarios recibidos sobre el usuario                                       |
+| `comentarios.rating_promedio`      | Float\|null | Rating promedio recibido (1-10), `null` si sin valoraciones                  |
+| `economia.total_ganado`            | Float       | Suma de `precio_conductor` de trayectos finalizados con reservas completadas |
+| `economia.pasajeros_transportados` | Int         | Reservas `completed` en trayectos del usuario como conductor                 |
+| `economia.kwh_generados`           | Float       | kWh totales generados (ahorro energético) como conductor                     |
+| `economia.eur_generados_kwh`       | Float       | EUR totales generados por ahorro energético (kWh) como conductor             |
+| `cae.km_recorridos`                | Float       | km totales recorridos en trayectos como conductor                            |
+| `cae.kwh_generados`                | Float       | kWh totales generados (ahorro energético)                                    |
+| `cae.eur_generados`                | Float       | EUR totales generados (ahorro económico)                                     |
+
+**Errores:**
+
+- `400` — `userId` no proporcionado.
+- `403` — No tienes permiso para ver las estadísticas de otro usuario (salvo admin).
+- `500` — Error en el servidor.
+
+---
+
+### 11. Perfil público de usuario
+
+```
+GET /api/reserva/profile/:userId
+```
+
+**Autenticación:** No requerida
+
+**Descripción:** Devuelve la información pública de un usuario: nombre, imagen de perfil, trayectos como conductor, valoraciones recibidas, pasajeros transportados y métricas CAE (km, kWh, EUR). No incluye datos privados como ganancias o reservas como pasajero.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción                |
+| --------- | ------------- | -------------------------- |
+| `userId`  | string (UUID) | ID del usuario a consultar |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "data": {
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "nombre": "Juan Pérez",
+    "img_perfil": "https://...",
+    "trayectos": {
+      "total_como_conductor": 25,
+      "finalizados": 18
+    },
+    "comentarios": {
+      "recibidos": 15,
+      "rating_promedio": 8.5
+    },
+    "pasajeros_transportados": 42,
+    "cae": {
+      "km_recorridos": 3200.5,
+      "kwh_generados": 580.2,
+      "eur_generados": 120.75
+    }
+  }
+}
+```
+
+**Campos de la respuesta:**
+
+| Campo                            | Tipo         | Descripción                                                  |
+| -------------------------------- | ------------ | ------------------------------------------------------------ |
+| `nombre`                         | String       | Nombre público del usuario                                   |
+| `img_perfil`                     | String\|null | URL de la imagen de perfil                                   |
+| `trayectos.total_como_conductor` | Int          | Total de trayectos como conductor                            |
+| `trayectos.finalizados`          | Int          | Trayectos finalizados como conductor                         |
+| `comentarios.recibidos`          | Int          | Comentarios recibidos sobre el usuario                       |
+| `comentarios.rating_promedio`    | Float\|null  | Rating promedio recibido (1-10), `null` si sin valoraciones  |
+| `pasajeros_transportados`        | Int          | Reservas `completed` en trayectos del usuario como conductor |
+| `cae.km_recorridos`              | Float        | km totales recorridos como conductor                         |
+| `cae.kwh_generados`              | Float        | kWh totales generados (ahorro energético)                    |
+| `cae.eur_generados`              | Float        | EUR totales generados (ahorro económico)                     |
+
+**Errores:**
+
+- `400` — `userId` no proporcionado.
+- `404` — Usuario no encontrado.
+- `500` — Error en el servidor.

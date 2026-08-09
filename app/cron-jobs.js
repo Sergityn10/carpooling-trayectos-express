@@ -3,6 +3,7 @@ import { prisma } from "./database.js";
 import { UsersAPI } from "./utils/users-api.js";
 import { NotificationsAPI } from "./utils/notifications-api.js";
 import { ReservaController } from "./controllers/reserva.js";
+import { TRAYECTO_STATUS } from "./constants/statuses.js";
 
 function getMessagesBaseHeaders() {
   const headers = {
@@ -76,7 +77,7 @@ async function tickCleanupFinalizedTrayectoChats() {
   const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
   const trayectos = await prisma.trayecto.findMany({
     where: {
-      status: "finalizado",
+      status: TRAYECTO_STATUS.FINALIZADO,
       hora: { lte: twoDaysAgo },
     },
     select: { id: true },
@@ -295,8 +296,8 @@ async function tickTrayectoStatusAndNotify() {
 
   for (const trayecto of toStart) {
     const result = await prisma.trayecto.updateMany({
-      where: { id: trayecto.id, status: "programado" },
-      data: { status: "en curso" },
+      where: { id: trayecto.id, status: TRAYECTO_STATUS.PROGRAMADO },
+      data: { status: TRAYECTO_STATUS.EN_CURSO },
     });
 
     if (result.count > 0) {
@@ -310,7 +311,7 @@ async function tickTrayectoStatusAndNotify() {
 
   const toFinalize = await prisma.trayecto.findMany({
     where: {
-      status: "en curso",
+      status: TRAYECTO_STATUS.EN_CURSO,
       hora: { lte: twoDaysAgo },
     },
     select: {
@@ -324,8 +325,8 @@ async function tickTrayectoStatusAndNotify() {
 
   for (const trayecto of toFinalize) {
     const result = await prisma.trayecto.updateMany({
-      where: { id: trayecto.id, status: "en curso" },
-      data: { status: "finalizado" },
+      where: { id: trayecto.id, status: TRAYECTO_STATUS.EN_CURSO },
+      data: { status: TRAYECTO_STATUS.FINALIZADO },
     });
 
     if (result.count > 0) {

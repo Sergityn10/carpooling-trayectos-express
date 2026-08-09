@@ -3,6 +3,11 @@ import dotenv from "dotenv";
 import { prisma } from "../database.js";
 import { GoogleMapsProvider } from "../providers/google-maps.js";
 import { UsersAPI } from "./users-api.js";
+import {
+  CAE_STATUS,
+  CAE_REPORT_STATUS,
+  CAE_REPORT_STATUS_VALUES,
+} from "../constants/statuses.js";
 
 dotenv.config();
 
@@ -61,11 +66,11 @@ async function generateInfoCAE(trayectoId) {
   }
 
   const pendingStatus = await prisma.statusInfoCAEs.findUnique({
-    where: { name: "pending" },
+    where: { name: CAE_STATUS.PENDING },
   });
 
   if (!pendingStatus) {
-    console.error("[CAE] Status 'pending' no encontrado en BD");
+    console.error(`[CAE] Status '${CAE_STATUS.PENDING}' no encontrado en BD`);
     return;
   }
 
@@ -362,7 +367,7 @@ async function generateInfoCAE(trayectoId) {
   eurGenerated = Math.round(eurGenerated * 100) / 100;
 
   const inReviewStatus = await prisma.statusInfoCAEs.findUnique({
-    where: { name: "in_review" },
+    where: { name: CAE_STATUS.IN_REVIEW },
   });
 
   await prisma.infoCAEs.updateMany({
@@ -384,10 +389,10 @@ async function generateInfoCAE(trayectoId) {
 
 async function approveCAE(caeId) {
   const inReviewStatus = await prisma.statusInfoCAEs.findUnique({
-    where: { name: "in_review" },
+    where: { name: CAE_STATUS.IN_REVIEW },
   });
   const completedStatus = await prisma.statusInfoCAEs.findUnique({
-    where: { name: "completed" },
+    where: { name: CAE_STATUS.COMPLETED },
   });
 
   if (!inReviewStatus || !completedStatus) {
@@ -411,7 +416,9 @@ async function approveCAE(caeId) {
     data: { status_id: completedStatus.id },
   });
 
-  console.log(`[CAE] Informe ${caeId} aprobado y marcado como completed`);
+  console.log(
+    `[CAE] Informe ${caeId} aprobado y marcado como ${CAE_STATUS.COMPLETED}`,
+  );
   return cae.id_trayecto;
 }
 
@@ -441,11 +448,11 @@ async function getCAEBalance(conductorId) {
   let cancelado = 0;
 
   for (const info of infos) {
-    const statusName = info.StatusInfoCAEs?.name ?? "pending";
+    const statusName = info.StatusInfoCAEs?.name ?? CAE_STATUS.PENDING;
     const eur = info.eur_generated ?? 0;
-    if (statusName === "completed") {
+    if (statusName === CAE_STATUS.COMPLETED) {
       disponible += eur;
-    } else if (statusName === "canceled") {
+    } else if (statusName === CAE_STATUS.CANCELED) {
       cancelado += eur;
     } else {
       enRevision += eur;
@@ -459,7 +466,7 @@ async function getCAEBalance(conductorId) {
     km_with_company: info.km_with_company,
     kwh_generated: info.kwh_generated,
     eur_generated: info.eur_generated,
-    status: info.StatusInfoCAEs?.name ?? "pending",
+    status: info.StatusInfoCAEs?.name ?? CAE_STATUS.PENDING,
     created_at: info.created_at,
     updated_at: info.updated_at,
   }));
@@ -522,7 +529,7 @@ async function listAllCAEs({ status, page = 1, limit = 50 } = {}) {
       km_with_company: info.km_with_company,
       kwh_generated: info.kwh_generated,
       eur_generated: info.eur_generated,
-      status: info.StatusInfoCAEs?.name ?? "pending",
+      status: info.StatusInfoCAEs?.name ?? CAE_STATUS.PENDING,
       created_at: info.created_at,
       updated_at: info.updated_at,
     };
@@ -561,7 +568,7 @@ async function listCAEsByUser(userId) {
       km_with_company: info.km_with_company,
       kwh_generated: info.kwh_generated,
       eur_generated: info.eur_generated,
-      status: info.StatusInfoCAEs?.name ?? "pending",
+      status: info.StatusInfoCAEs?.name ?? CAE_STATUS.PENDING,
       created_at: info.created_at,
       updated_at: info.updated_at,
     };
@@ -575,9 +582,10 @@ const KWH_THRESHOLD = KWH_THRESHOLD_MWH * 1000;
 
 async function getPendingCAEsForReport() {
   const pendingStatus = await prisma.statusInfoCAEs.findUnique({
-    where: { name: "in_review" },
+    where: { name: CAE_STATUS.IN_REVIEW },
   });
-  if (!pendingStatus) throw new Error("Estado 'in_review' no encontrado");
+  if (!pendingStatus)
+    throw new Error(`Estado '${CAE_STATUS.IN_REVIEW}' no encontrado`);
 
   const caes = await prisma.infoCAEs.findMany({
     where: {
@@ -592,9 +600,10 @@ async function getPendingCAEsForReport() {
 
 async function createCAEReport(name) {
   const pendingStatus = await prisma.statusInfoCAEs.findUnique({
-    where: { name: "in_review" },
+    where: { name: CAE_STATUS.IN_REVIEW },
   });
-  if (!pendingStatus) throw new Error("Estado 'in_review' no encontrado");
+  if (!pendingStatus)
+    throw new Error(`Estado '${CAE_STATUS.IN_REVIEW}' no encontrado`);
 
   const caes = await prisma.infoCAEs.findMany({
     where: {
@@ -615,7 +624,7 @@ async function createCAEReport(name) {
     data: {
       id: randomUUID(),
       name: name || `Reporte CAE ${new Date().toISOString().split("T")[0]}`,
-      status: "draft",
+      status: CAE_REPORT_STATUS.DRAFT,
       total_kwh: Math.round(totalKwh * 100) / 100,
       total_eur: Math.round(totalEur * 100) / 100,
       total_caes: caes.length,
@@ -785,7 +794,7 @@ async function getCAEReportData(reportId, { headers = {} } = {}) {
     return {
       cae_id: cae.id,
       trayecto_id: cae.id_trayecto,
-      estado: cae.StatusInfoCAEs?.name ?? "pending",
+      estado: cae.StatusInfoCAEs?.name ?? CAE_STATUS.PENDING,
       km_recorridos: cae.km_recorridos,
       km_with_company: cae.km_with_company,
       kwh_generated: cae.kwh_generated,
@@ -883,13 +892,13 @@ async function listCAEReports({ status, page = 1, limit = 50 } = {}) {
 
 async function getCAEReportSummary() {
   const pendingStatus = await prisma.statusInfoCAEs.findUnique({
-    where: { name: "in_review" },
+    where: { name: CAE_STATUS.IN_REVIEW },
   });
   const completedStatus = await prisma.statusInfoCAEs.findUnique({
-    where: { name: "completed" },
+    where: { name: CAE_STATUS.COMPLETED },
   });
   const canceledStatus = await prisma.statusInfoCAEs.findUnique({
-    where: { name: "canceled" },
+    where: { name: CAE_STATUS.CANCELED },
   });
 
   const [
@@ -940,7 +949,7 @@ async function getCAEReportSummary() {
   };
 }
 
-const VALID_REPORT_STATUSES = ["draft", "sent", "reviewed"];
+const VALID_REPORT_STATUSES = CAE_REPORT_STATUS_VALUES;
 
 async function updateCAEReportStatus(reportId, newStatus) {
   if (!VALID_REPORT_STATUSES.includes(newStatus)) {

@@ -614,6 +614,18 @@ app.post("/api/reserva", utilsAuthentication.authenticate, async (req, res) => {
   ReservaController.addReserva(req, res);
 });
 
+app.get(
+  "/api/reserva/stats/:userId",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    ReservaController.getUserStats(req, res);
+  },
+);
+
+app.get("/api/reserva/profile/:userId", async (req, res) => {
+  ReservaController.getPublicProfile(req, res);
+});
+
 app.post(
   "/api/reserva/qr",
   utilsAuthentication.authenticate,
@@ -1067,12 +1079,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetAllReservas(req, res);
   },
@@ -1083,12 +1093,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetReservaById(req, res);
   },
@@ -1099,12 +1107,10 @@ app.put(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminUpdateReserva(req, res);
   },
@@ -1115,12 +1121,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeleteReserva(req, res);
   },
@@ -1132,12 +1136,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetAllComments(req, res);
   },
@@ -1148,12 +1150,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetCommentById(req, res);
   },
@@ -1164,12 +1164,10 @@ app.put(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminUpdateComment(req, res);
   },
@@ -1180,12 +1178,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeleteComment(req, res);
   },
@@ -1197,12 +1193,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetAllPagos(req, res);
   },
@@ -1213,12 +1207,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetPagoById(req, res);
   },
@@ -1229,12 +1221,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeletePago(req, res);
   },
@@ -1246,12 +1236,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetAllRecorridos(req, res);
   },
@@ -1262,12 +1250,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeleteRecorrido(req, res);
   },
@@ -1278,12 +1264,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeleteRecorridosByTrayecto(req, res);
   },
@@ -1295,12 +1279,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetAllEventos(req, res);
   },
@@ -1311,12 +1293,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeleteEvento(req, res);
   },
@@ -1327,12 +1307,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeleteEventosByTrayecto(req, res);
   },
@@ -1344,12 +1322,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetAllTramos(req, res);
   },
@@ -1360,12 +1336,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeleteTramo(req, res);
   },
@@ -1376,12 +1350,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeleteTramosByTrayecto(req, res);
   },
@@ -1393,12 +1365,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetAllUbicaciones(req, res);
   },
@@ -1409,12 +1379,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeleteUbicacion(req, res);
   },
@@ -1426,12 +1394,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetAllFrequentRoutes(req, res);
   },
@@ -1442,12 +1408,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeleteFrequentRoute(req, res);
   },
@@ -1459,12 +1423,10 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminGetAllInfoCAEs(req, res);
   },
@@ -1475,12 +1437,10 @@ app.put(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminUpdateInfoCAE(req, res);
   },
@@ -1491,12 +1451,10 @@ app.delete(
   utilsAuthentication.authenticate,
   async (req, res) => {
     if (req.user?.role !== "admin") {
-      return res
-        .status(403)
-        .send({
-          status: "Error",
-          message: "Solo un admin puede acceder a este endpoint",
-        });
+      return res.status(403).send({
+        status: "Error",
+        message: "Solo un admin puede acceder a este endpoint",
+      });
     }
     AdminController.adminDeleteInfoCAE(req, res);
   },

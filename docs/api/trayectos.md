@@ -37,7 +37,41 @@ GET /api/trayecto
 
 **Auth:** Requerida
 
-**Respuesta:** Array de trayectos con datos del conductor (nombre, imagen) y campo `valorado`.
+**Descripción:** Devuelve todos los trayectos disponibles (excluyendo finalizados, en curso y cancelados) con paginación. Incluye nombre e imagen del conductor y campo `valorado`.
+
+**Query params:**
+
+| Parámetro | Tipo | Descripción                                    |
+| --------- | ---- | ---------------------------------------------- |
+| `page`    | Int  | Página (por defecto 1)                         |
+| `limit`   | Int  | Elementos por página (por defecto 10, máx 100) |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "data": [
+    {
+      "id": "uuid",
+      "origen": "Madrid",
+      "destino": "Valencia",
+      "conductor": "Juan Pérez",
+      "conductor_id": "uuid",
+      "img_perfil": "https://...",
+      "valorado": false
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 50,
+    "totalPages": 5,
+    "hasNextPage": true,
+    "hasPrevPage": false
+  }
+}
+```
 
 ---
 
@@ -69,6 +103,41 @@ GET /api/trayecto/mis-trayectos
 
 **Auth:** Requerida
 
+**Descripción:** Devuelve los trayectos del usuario autenticado como conductor, con paginación. Incluye nombre e imagen del conductor y campo `valorado`.
+
+**Query params:**
+
+| Parámetro | Tipo | Descripción                                    |
+| --------- | ---- | ---------------------------------------------- |
+| `page`    | Int  | Página (por defecto 1)                         |
+| `limit`   | Int  | Elementos por página (por defecto 10, máx 100) |
+
+**Respuesta 200:**
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "origen": "Madrid",
+      "destino": "Valencia",
+      "conductor": "Juan Pérez",
+      "conductor_id": "uuid",
+      "img_perfil": "https://...",
+      "valorado": false
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 15,
+    "totalPages": 2,
+    "hasNextPage": true,
+    "hasPrevPage": false
+  }
+}
+```
+
 ---
 
 ### Obtener próximos trayectos (como pasajero)
@@ -78,6 +147,38 @@ GET /api/trayecto/proximos
 ```
 
 **Auth:** Requerida
+
+**Descripción:** Devuelve los próximos trayectos del usuario (como conductor o pasajero con reserva activa) dentro de las próximas 48 horas o en curso. **Sin paginación** (devuelve todos los resultados). Incluye reservas confirmadas con info de pasajeros (nombre e imagen).
+
+**Respuesta 200:**
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "origen": "Madrid",
+      "destino": "Valencia",
+      "hora": "2025-01-15T10:00:00.000Z",
+      "conductor": "Juan Pérez",
+      "conductor_id": "uuid",
+      "img_perfil": "https://...",
+      "valorado": false,
+      "reservas": [
+        {
+          "id_reserva": "uuid",
+          "user_id": "uuid",
+          "status": "completed",
+          "trip_outcome": "pending",
+          "created_at": "2025-01-10T12:00:00.000Z",
+          "nombre": "Ana López",
+          "img_perfil": "https://..."
+        }
+      ]
+    }
+  ]
+}
+```
 
 ---
 
@@ -271,6 +372,47 @@ GET /api/trayecto/conductor/:id
 
 **Auth:** Opcional
 
+**Descripción:** Devuelve los trayectos de un conductor específico, con paginación.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción      |
+| --------- | ------------- | ---------------- |
+| `id`      | string (UUID) | ID del conductor |
+
+**Query params:**
+
+| Parámetro | Tipo | Descripción                                    |
+| --------- | ---- | ---------------------------------------------- |
+| `page`    | Int  | Página (por defecto 1)                         |
+| `limit`   | Int  | Elementos por página (por defecto 10, máx 100) |
+
+**Respuesta 200:**
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "origen": "Madrid",
+      "destino": "Valencia",
+      "hora": "2025-01-15T10:00:00.000Z",
+      "plazas": 4,
+      "disponible": 2,
+      "status": "programado"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 8,
+    "totalPages": 1,
+    "hasNextPage": false,
+    "hasPrevPage": false
+  }
+}
+```
+
 ---
 
 ### Actualizar coordenadas (administración)
@@ -355,18 +497,18 @@ GET /api/admin/trayectos
 
 **Query params:**
 
-| Param        | Tipo   | Descripción                                                                                      |
-| ------------ | ------ | ------------------------------------------------------------------------------------------------ |
-| `status`     | String | Filtrar por estado. Acepta múltiples separados por coma (ej: `programado,en curso`)              |
-| `conductor`  | UUID   | Filtrar por ID de conductor                                                                      |
-| `evento_id`  | UUID   | Filtrar por evento asociado                                                                      |
-| `fechaDesde` | String | Fecha mínima del campo `hora` (formato ISO 8601)                                                 |
-| `fechaHasta` | String | Fecha máxima del campo `hora` (formato ISO 8601)                                                 |
-| `search`     | String | Búsqueda textual sobre `origen` y `destino`                                                      |
-| `orderBy`    | String | Campo por el que ordenar (ej: `hora`, `created_at`, `precio`). Por defecto `created_at`          |
-| `order`      | String | Dirección de ordenación: `asc` o `desc`. Por defecto `desc`                                      |
-| `page`       | Int    | Página (por defecto 1)                                                                           |
-| `limit`      | Int    | Elementos por página (por defecto 10, máximo 100)                                                |
+| Param        | Tipo   | Descripción                                                                             |
+| ------------ | ------ | --------------------------------------------------------------------------------------- |
+| `status`     | String | Filtrar por estado. Acepta múltiples separados por coma (ej: `programado,en curso`)     |
+| `conductor`  | UUID   | Filtrar por ID de conductor                                                             |
+| `evento_id`  | UUID   | Filtrar por evento asociado                                                             |
+| `fechaDesde` | String | Fecha mínima del campo `hora` (formato ISO 8601)                                        |
+| `fechaHasta` | String | Fecha máxima del campo `hora` (formato ISO 8601)                                        |
+| `search`     | String | Búsqueda textual sobre `origen` y `destino`                                             |
+| `orderBy`    | String | Campo por el que ordenar (ej: `hora`, `created_at`, `precio`). Por defecto `created_at` |
+| `order`      | String | Dirección de ordenación: `asc` o `desc`. Por defecto `desc`                             |
+| `page`       | Int    | Página (por defecto 1)                                                                  |
+| `limit`      | Int    | Elementos por página (por defecto 10, máximo 100)                                       |
 
 **Respuesta 200:**
 

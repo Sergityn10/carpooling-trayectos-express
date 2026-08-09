@@ -117,6 +117,7 @@ async function handleCheckoutSessionExpired(event) {
   reserva = reserva[0]?.[0];
   if (!reserva) return;
   if (String(reserva.status).toLowerCase() === "completed") return;
+  if (String(reserva.status).toLowerCase() === "canceled") return;
 
   await connection.query(
     "UPDATE trayectos SET disponible = CASE WHEN disponible < plazas THEN disponible + 1 ELSE disponible END WHERE id = ?",

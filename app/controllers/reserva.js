@@ -5,6 +5,12 @@ import dotenv from "dotenv";
 import { UsersAPI } from "../utils/users-api.js";
 import { NotificationsAPI } from "../utils/notifications-api.js";
 import { PaginationUtils } from "../utils/pagination.js";
+import {
+  RESERVA_STATUS,
+  RESERVA_STATUS_VALUES,
+  TRIP_OUTCOME,
+  TRAYECTO_STATUS,
+} from "../constants/statuses.js";
 
 import Stripe from "stripe";
 dotenv.config();
@@ -228,7 +234,7 @@ async function addReserva(req, res) {
   let reserva = {
     user_id: userId,
     trayecto_id,
-    status: isFree ? "completed" : "pending",
+    status: isFree ? RESERVA_STATUS.COMPLETED : RESERVA_STATUS.PENDING,
   };
   let disponible = trayecto.disponible;
   console.log("Disponibilidad del trayecto:", disponible);
@@ -244,6 +250,7 @@ async function addReserva(req, res) {
   // Inserta la reserva en la base de datos
   let duplicado = false;
   let reservaId = randomUUID();
+  let decrementedDisponible = false;
   try {
     await prisma.reserva.create({
       data: {
@@ -253,6 +260,12 @@ async function addReserva(req, res) {
         status: reserva.status,
       },
     });
+    // Decrementar disponible al crear la reserva
+    await prisma.trayecto.update({
+      where: { id: trayecto_id },
+      data: { disponible: { decrement: 1 } },
+    });
+    decrementedDisponible = true;
   } catch (error) {
     if (error.code === "P2003") {
       return res.status(400).send({
@@ -267,7 +280,7 @@ async function addReserva(req, res) {
           user_id_id_trayecto: { user_id: userId, id_trayecto: trayecto_id },
         },
       });
-      if (existing.status === "completed") {
+      if (existing.status === RESERVA_STATUS.COMPLETED) {
         return res.status(400).send({
           status: "Error",
           message: "El usuario ya tiene una reserva para este trayecto",
@@ -275,12 +288,27 @@ async function addReserva(req, res) {
       }
       reserva = existing;
       reservaId = existing.id_reserva;
+      // Si la reserva existente estaba cancelada, decrementar disponible
+      if (existing.status === RESERVA_STATUS.CANCELED) {
+        await prisma.trayecto.update({
+          where: { id: trayecto_id },
+          data: { disponible: { decrement: 1 } },
+        });
+        decrementedDisponible = true;
+      }
       if (isFree) {
         await prisma.reserva.update({
           where: { id_reserva: reservaId },
-          data: { status: "completed" },
+          data: { status: RESERVA_STATUS.COMPLETED },
         });
-        reserva.status = "completed";
+        reserva.status = RESERVA_STATUS.COMPLETED;
+      } else if (existing.status === RESERVA_STATUS.CANCELED) {
+        // Re-activar reserva cancelada a pending para pago
+        await prisma.reserva.update({
+          where: { id_reserva: reservaId },
+          data: { status: RESERVA_STATUS.PENDING },
+        });
+        reserva.status = RESERVA_STATUS.PENDING;
       }
     } else {
       return res
@@ -296,14 +324,32 @@ async function addReserva(req, res) {
   }
 
   if (!MESSAGES_URL) {
-    if (!duplicado) {
+    if (!duplicado && decrementedDisponible) {
       try {
         await prisma.reserva.delete({ where: { id_reserva: reservaId } });
+        await prisma.trayecto.update({
+          where: { id: trayecto_id },
+          data: { disponible: { increment: 1 } },
+        });
       } catch (e) {
         console.error(
           "Error haciendo rollback de reserva tras MESSAGES_URL missing:",
           e,
         );
+      }
+    } else if (duplicado && decrementedDisponible) {
+      // Restaurar disponible y marcar como canceled si era un duplicado re-activado
+      try {
+        await prisma.reserva.update({
+          where: { id_reserva: reservaId },
+          data: { status: RESERVA_STATUS.CANCELED },
+        });
+        await prisma.trayecto.update({
+          where: { id: trayecto_id },
+          data: { disponible: { increment: 1 } },
+        });
+      } catch (e) {
+        console.error("Error haciendo rollback de reserva duplicada:", e);
       }
     }
     return res
@@ -423,14 +469,31 @@ async function addReserva(req, res) {
     }
   } catch (error) {
     console.error("Error uniéndose al chat del trayecto:", error);
-    if (!duplicado) {
+    if (!duplicado && decrementedDisponible) {
       try {
         await prisma.reserva.delete({ where: { id_reserva: reservaId } });
+        await prisma.trayecto.update({
+          where: { id: trayecto_id },
+          data: { disponible: { increment: 1 } },
+        });
       } catch (e) {
         console.error(
           "Error haciendo rollback de reserva tras fallo uniendo al chat:",
           e,
         );
+      }
+    } else if (duplicado && decrementedDisponible) {
+      try {
+        await prisma.reserva.update({
+          where: { id_reserva: reservaId },
+          data: { status: RESERVA_STATUS.CANCELED },
+        });
+        await prisma.trayecto.update({
+          where: { id: trayecto_id },
+          data: { disponible: { increment: 1 } },
+        });
+      } catch (e) {
+        console.error("Error haciendo rollback de reserva duplicada:", e);
       }
     }
     return res.status(502).send({
@@ -523,7 +586,7 @@ async function getReservasByTravelId(req, res) {
       .send({ status: "Error", message: "No se ha encontrado este trayecto" });
   }
   let pasajerosList = await prisma.reserva.findMany({
-    where: { id_trayecto: travelId, NOT: { status: "canceled" } },
+    where: { id_trayecto: travelId, NOT: { status: RESERVA_STATUS.CANCELED } },
   });
   //Agregar info adicional como la img_perfil y el nombre
   if (pasajerosList.length === 0) {
@@ -685,7 +748,7 @@ async function deleteReserva(req, res) {
     });
   }
 
-  if (String(reserva.status ?? "").toLowerCase() === "canceled") {
+  if (String(reserva.status ?? "").toLowerCase() === RESERVA_STATUS.CANCELED) {
     return res
       .status(200)
       .send({ status: "Success", message: "Reserva cancelada correctamente" });
@@ -778,7 +841,7 @@ async function deleteReserva(req, res) {
     await prisma.$transaction([
       prisma.reserva.update({
         where: { id_reserva: idReserva },
-        data: { status: "canceled" },
+        data: { status: RESERVA_STATUS.CANCELED },
       }),
       prisma.$executeRawUnsafe(
         "UPDATE trayectos SET disponible = CASE WHEN disponible < plazas THEN disponible + 1 ELSE disponible END WHERE id = ?",
@@ -854,27 +917,32 @@ async function confirmarViajeExitoso(req, res) {
     });
   }
 
-  if (String(reserva.status).toLowerCase() !== "completed") {
+  if (String(reserva.status).toLowerCase() !== RESERVA_STATUS.COMPLETED) {
     return res.status(409).send({
       status: "Error",
       message: "La reserva todavía no está pagada/completada",
     });
   }
 
-  const outcome = String(reserva.trip_outcome ?? "pending").toLowerCase();
-  if (outcome === "success") {
+  const outcome = String(
+    reserva.trip_outcome ?? TRIP_OUTCOME.PENDING,
+  ).toLowerCase();
+  if (outcome === TRIP_OUTCOME.SUCCESS) {
     return res
       .status(200)
       .send({ status: "Success", message: "Viaje ya confirmado como exitoso" });
   }
-  if (outcome === "issue") {
+  if (outcome === TRIP_OUTCOME.ISSUE) {
     return res.status(409).send({
       status: "Error",
       message: "Esta reserva está marcada con incidencia/reclamación",
     });
   }
 
-  if (String(reserva.trayecto_status ?? "").toLowerCase() !== "finalizado") {
+  if (
+    String(reserva.trayecto_status ?? "").toLowerCase() !==
+    TRAYECTO_STATUS.FINALIZADO
+  ) {
     return res.status(409).send({
       status: "Error",
       message: "El trayecto todavía no está finalizado",
@@ -886,7 +954,7 @@ async function confirmarViajeExitoso(req, res) {
     await prisma.reserva.update({
       where: { id_reserva: idReserva },
       data: {
-        trip_outcome: "success",
+        trip_outcome: TRIP_OUTCOME.SUCCESS,
         trip_outcome_reason: null,
         trip_outcome_at: new Date(),
       },
@@ -962,7 +1030,7 @@ async function confirmarViajeExitoso(req, res) {
   }
 
   await prisma.$executeRawUnsafe(
-    "UPDATE reservas SET trip_outcome = 'success', trip_outcome_reason = NULL, trip_outcome_at = NOW(), stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ?), stripe_payment_intent_status = COALESCE(stripe_payment_intent_status, 'captured') WHERE id_reserva = ?",
+    `UPDATE reservas SET trip_outcome = '${TRIP_OUTCOME.SUCCESS}', trip_outcome_reason = NULL, trip_outcome_at = NOW(), stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ?), stripe_payment_intent_status = COALESCE(stripe_payment_intent_status, 'captured') WHERE id_reserva = ?`,
     paymentIntentId,
     idReserva,
   );
@@ -1007,8 +1075,10 @@ async function reclamarViaje(req, res) {
     });
   }
 
-  const outcome = String(reserva.trip_outcome ?? "pending").toLowerCase();
-  if (outcome === "success") {
+  const outcome = String(
+    reserva.trip_outcome ?? TRIP_OUTCOME.PENDING,
+  ).toLowerCase();
+  if (outcome === TRIP_OUTCOME.SUCCESS) {
     return res.status(409).send({
       status: "Error",
       message: "El viaje ya fue confirmado como exitoso",
@@ -1016,7 +1086,7 @@ async function reclamarViaje(req, res) {
   }
 
   await prisma.$executeRawUnsafe(
-    "UPDATE reservas SET trip_outcome = 'issue', trip_outcome_reason = ?, trip_outcome_at = NOW() WHERE id_reserva = ?",
+    `UPDATE reservas SET trip_outcome = '${TRIP_OUTCOME.ISSUE}', trip_outcome_reason = ?, trip_outcome_at = NOW() WHERE id_reserva = ?`,
     reason,
     idReserva,
   );
@@ -1212,8 +1282,8 @@ async function capturarPagosTrayecto(trayectoId) {
   const reservas = await prisma.reserva.findMany({
     where: {
       id_trayecto: trayectoId,
-      status: "completed",
-      trip_outcome: "pending",
+      status: RESERVA_STATUS.COMPLETED,
+      trip_outcome: TRIP_OUTCOME.PENDING,
       stripe_checkout_session_id: { not: null },
     },
   });
@@ -1291,7 +1361,7 @@ async function capturarPagosTrayecto(trayectoId) {
       }
 
       await prisma.$executeRawUnsafe(
-        "UPDATE reservas SET trip_outcome = 'success', trip_outcome_reason = NULL, trip_outcome_at = NOW(), stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ?), stripe_payment_intent_status = COALESCE(stripe_payment_intent_status, 'captured') WHERE id_reserva = ?",
+        `UPDATE reservas SET trip_outcome = '${TRIP_OUTCOME.SUCCESS}', trip_outcome_reason = NULL, trip_outcome_at = NOW(), stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ?), stripe_payment_intent_status = COALESCE(stripe_payment_intent_status, 'captured') WHERE id_reserva = ?`,
         paymentIntentId,
         reserva.id_reserva,
       );
@@ -1321,7 +1391,7 @@ async function actualizarStatusReserva(req, res) {
   const { id } = req.params;
   const { status, payment_intent_id } = req.body;
   console.log();
-  const VALID_STATUSES = ["pending", "completed", "canceled"];
+  const VALID_STATUSES = RESERVA_STATUS_VALUES;
 
   if (!status) {
     return res
@@ -1562,13 +1632,16 @@ async function reservaQR(req, res) {
     }
   }
 
-  const reservaStatus = isFree || paymentConfirmed ? "completed" : "pending";
+  const reservaStatus =
+    isFree || paymentConfirmed
+      ? RESERVA_STATUS.COMPLETED
+      : RESERVA_STATUS.PENDING;
   let reservaId;
 
   try {
     await prisma.$transaction(async (tx) => {
       if (existing) {
-        if (existing.status === "canceled") {
+        if (existing.status === RESERVA_STATUS.CANCELED) {
           reservaId = existing.id_reserva;
           await tx.reserva.update({
             where: { id_reserva: reservaId },
@@ -1677,9 +1750,276 @@ async function reservaQR(req, res) {
       id: reservaId,
       user_id: userId,
       trayecto_id,
-      status: "completed",
+      status: RESERVA_STATUS.COMPLETED,
     },
   });
+}
+
+async function getUserStats(req, res) {
+  const { userId } = req.params;
+  const authenticatedUserId = req.user?.userId ?? req.user?.id;
+
+  if (!userId) {
+    return res
+      .status(400)
+      .send({ status: "Error", message: "userId es obligatorio" });
+  }
+
+  if (
+    authenticatedUserId &&
+    String(authenticatedUserId) !== String(userId) &&
+    req.user?.role !== "admin"
+  ) {
+    return res.status(403).send({
+      status: "Error",
+      message: "No tienes permiso para ver las estadísticas de otro usuario",
+    });
+  }
+
+  try {
+    const userStr = String(userId);
+
+    // 1. Trayectos totales como conductor (todos los estados)
+    const trayectosComoConductor = await prisma.trayecto.count({
+      where: { conductor: userStr },
+    });
+
+    const trayectosFinalizados = await prisma.trayecto.count({
+      where: { conductor: userStr, status: TRAYECTO_STATUS.FINALIZADO },
+    });
+
+    const trayectosActivos = await prisma.trayecto.count({
+      where: {
+        conductor: userStr,
+        status: {
+          notIn: [TRAYECTO_STATUS.FINALIZADO, TRAYECTO_STATUS.CANCELADO],
+        },
+      },
+    });
+
+    // 2. Comentarios realizados (como commentator)
+    const comentariosRealizados = await prisma.comment.count({
+      where: { user_id_commentator: userStr },
+    });
+
+    // 3. Comentarios recibidos (como user_id_trayect)
+    const comentariosRecibidos = await prisma.comment.count({
+      where: { user_id_trayect: userStr },
+    });
+
+    // Rating promedio recibido
+    const ratingAgg = await prisma.comment.aggregate({
+      where: { user_id_trayect: userStr },
+      _avg: { rating: true },
+      _count: { rating: true },
+    });
+
+    const ratingPromedio = ratingAgg._avg.rating
+      ? Math.round(ratingAgg._avg.rating * 100) / 100
+      : null;
+
+    // 4. Total ganado: suma de precio_conductor de trayectos finalizados donde tiene reservas completed
+    const gananciasRows = await prisma.$queryRawUnsafe(
+      `SELECT COALESCE(SUM(t.precio_conductor), 0) AS total_ganado
+       FROM trayectos t
+       INNER JOIN reservas r ON r.id_trayecto = t.id
+       WHERE t.conductor = ? AND t.status = '${TRAYECTO_STATUS.FINALIZADO}' AND r.status = '${RESERVA_STATUS.COMPLETED}'`,
+      userStr,
+    );
+    const totalGanado =
+      gananciasRows && gananciasRows[0]
+        ? Number(gananciasRows[0].total_ganado)
+        : 0;
+
+    // 5. Reservas como pasajero
+    const reservasComoPasajero = await prisma.reserva.count({
+      where: { user_id: userStr },
+    });
+
+    const reservasCompletadas = await prisma.reserva.count({
+      where: { user_id: userStr, status: RESERVA_STATUS.COMPLETED },
+    });
+
+    const reservasCanceladas = await prisma.reserva.count({
+      where: { user_id: userStr, status: RESERVA_STATUS.CANCELED },
+    });
+
+    const reservasPendientes = await prisma.reserva.count({
+      where: { user_id: userStr, status: RESERVA_STATUS.PENDING },
+    });
+
+    // 6. CAE: km ahorrados y EUR generados como conductor
+    const caeRows = await prisma.$queryRawUnsafe(
+      `SELECT
+         COALESCE(SUM(ic.km_recorridos), 0) AS km_recorridos,
+         COALESCE(SUM(ic.kwh_generated), 0) AS kwh_generated,
+         COALESCE(SUM(ic.eur_generated), 0) AS eur_generated
+       FROM info_caes ic
+       INNER JOIN trayectos t ON t.id = ic.id_trayecto
+       WHERE t.conductor = ?`,
+      userStr,
+    );
+
+    const kmRecorridos =
+      caeRows && caeRows[0] ? Number(caeRows[0].km_recorridos) : 0;
+    const kwhGenerados =
+      caeRows && caeRows[0] ? Number(caeRows[0].kwh_generated) : 0;
+    const eurGenerados =
+      caeRows && caeRows[0] ? Number(caeRows[0].eur_generated) : 0;
+
+    // 7. Plazas ofrecidas totales
+    const plazasAgg = await prisma.trayecto.aggregate({
+      where: { conductor: userStr },
+      _sum: { plazas: true },
+    });
+    const plazasOfrecidas = plazasAgg._sum.plazas ?? 0;
+
+    // 8. Pasajeros transportados (reservas completed en trayectos del conductor)
+    const pasajerosTransportados = await prisma.reserva.count({
+      where: {
+        status: RESERVA_STATUS.COMPLETED,
+        Trayecto: { conductor: userStr },
+      },
+    });
+
+    return res.status(200).send({
+      status: "Success",
+      data: {
+        user_id: userStr,
+        trayectos: {
+          total_como_conductor: trayectosComoConductor,
+          finalizados: trayectosFinalizados,
+          activos: trayectosActivos,
+          plazas_ofrecidas: plazasOfrecidas,
+        },
+        reservas: {
+          total_como_pasajero: reservasComoPasajero,
+          completadas: reservasCompletadas,
+          pendientes: reservasPendientes,
+          canceladas: reservasCanceladas,
+        },
+        comentarios: {
+          realizados: comentariosRealizados,
+          recibidos: comentariosRecibidos,
+          rating_promedio: ratingPromedio,
+        },
+        economia: {
+          total_ganado: Math.round(totalGanado * 100) / 100,
+          pasajeros_transportados: pasajerosTransportados,
+          kwh_generados: Math.round(kwhGenerados * 100) / 100,
+          eur_generados_kwh: Math.round(eurGenerados * 100) / 100,
+        },
+        cae: {
+          km_recorridos: Math.round(kmRecorridos * 100) / 100,
+          kwh_generados: Math.round(kwhGenerados * 100) / 100,
+          eur_generados: Math.round(eurGenerados * 100) / 100,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error en getUserStats:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error al obtener las estadísticas del usuario",
+    });
+  }
+}
+
+async function getPublicProfile(req, res) {
+  const { userId } = req.params;
+
+  if (!userId) {
+    return res
+      .status(400)
+      .send({ status: "Error", message: "userId es obligatorio" });
+  }
+
+  try {
+    const userStr = String(userId);
+
+    const userInfo = await UsersAPI.fetchUserPublicInfo(userStr);
+    if (!userInfo) {
+      return res
+        .status(404)
+        .send({ status: "Error", message: "Usuario no encontrado" });
+    }
+
+    const trayectosComoConductor = await prisma.trayecto.count({
+      where: { conductor: userStr },
+    });
+
+    const trayectosFinalizados = await prisma.trayecto.count({
+      where: { conductor: userStr, status: TRAYECTO_STATUS.FINALIZADO },
+    });
+
+    const comentariosRecibidos = await prisma.comment.count({
+      where: { user_id_trayect: userStr },
+    });
+
+    const ratingAgg = await prisma.comment.aggregate({
+      where: { user_id_trayect: userStr },
+      _avg: { rating: true },
+      _count: { rating: true },
+    });
+
+    const ratingPromedio = ratingAgg._avg.rating
+      ? Math.round(ratingAgg._avg.rating * 100) / 100
+      : null;
+
+    const pasajerosTransportados = await prisma.reserva.count({
+      where: {
+        status: RESERVA_STATUS.COMPLETED,
+        Trayecto: { conductor: userStr },
+      },
+    });
+
+    const caeRows = await prisma.$queryRawUnsafe(
+      `SELECT
+         COALESCE(SUM(ic.km_recorridos), 0) AS km_recorridos,
+         COALESCE(SUM(ic.kwh_generated), 0) AS kwh_generated,
+         COALESCE(SUM(ic.eur_generated), 0) AS eur_generated
+       FROM info_caes ic
+       INNER JOIN trayectos t ON t.id = ic.id_trayecto
+       WHERE t.conductor = ?`,
+      userStr,
+    );
+
+    const kmRecorridos =
+      caeRows && caeRows[0] ? Number(caeRows[0].km_recorridos) : 0;
+    const kwhGenerados =
+      caeRows && caeRows[0] ? Number(caeRows[0].kwh_generated) : 0;
+    const eurGenerados =
+      caeRows && caeRows[0] ? Number(caeRows[0].eur_generated) : 0;
+
+    return res.status(200).send({
+      status: "Success",
+      data: {
+        user_id: userStr,
+        nombre: userInfo.name || "Desconocido",
+        img_perfil: userInfo.img_perfil ?? null,
+        trayectos: {
+          total_como_conductor: trayectosComoConductor,
+          finalizados: trayectosFinalizados,
+        },
+        comentarios: {
+          recibidos: comentariosRecibidos,
+          rating_promedio: ratingPromedio,
+        },
+        pasajeros_transportados: pasajerosTransportados,
+        cae: {
+          km_recorridos: Math.round(kmRecorridos * 100) / 100,
+          kwh_generados: Math.round(kwhGenerados * 100) / 100,
+          eur_generados: Math.round(eurGenerados * 100) / 100,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error en getPublicProfile:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error al obtener el perfil público del usuario",
+    });
+  }
 }
 
 export const ReservaController = {
@@ -1693,4 +2033,6 @@ export const ReservaController = {
   actualizarStatusReserva,
   reservaQR,
   capturarPagosTrayecto,
+  getUserStats,
+  getPublicProfile,
 };
