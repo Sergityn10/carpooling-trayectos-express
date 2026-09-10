@@ -1504,6 +1504,11 @@ async function buscarTrayectos(req, res) {
       JSON.stringify(userDestCoords),
     );
 
+    res.locals.searchOriginLat = userOriginCoords.lat;
+    res.locals.searchOriginLng = userOriginCoords.lng;
+    res.locals.searchDestLat = userDestCoords.lat;
+    res.locals.searchDestLng = userDestCoords.lng;
+
     // 2. Cálculo de bounding boxes y filtrado compatible con SQLite
     const toRad = (deg) => (deg * Math.PI) / 180;
     const toDeg = (rad) => (rad * 180) / Math.PI;
@@ -1684,6 +1689,8 @@ async function buscarTrayectos(req, res) {
 
     console.log("[buscarTrayectos] Resultado final filtrado:", filtered.length);
     const total = filtered.length;
+
+    res.locals.searchResultsCount = total;
     const totalPages = Math.max(Math.ceil(total / limit), 1);
     const pageSlice = filtered.slice(offset, offset + limit);
 
@@ -2061,7 +2068,7 @@ async function obtenerTrayectosPorEvento(req, res) {
 
 async function buscarTrayectosPorEvento(req, res) {
   const { eventoId } = req.params;
-  const { lat, lng, direccion, radius } = req.query;
+  const { lat, lng, direccion, radius, ciudad, fecha } = req.query;
 
   if (!eventoId) {
     return res.status(400).send({
@@ -2070,17 +2077,40 @@ async function buscarTrayectosPorEvento(req, res) {
     });
   }
 
-  const userLat = parseFloat(lat);
-  const userLng = parseFloat(lng);
+  let userLat = parseFloat(lat);
+  let userLng = parseFloat(lng);
+
   if (isNaN(userLat) || isNaN(userLng)) {
-    return res.status(400).send({
-      status: "Error",
-      message: "lat y lng son obligatorios y deben ser numéricos",
-    });
+    if (ciudad) {
+      try {
+        const coords = await GoogleMapsProvider.geocodeAddress(
+          String(ciudad).trim(),
+        );
+        userLat = coords.lat;
+        userLng = coords.lng;
+        console.log(
+          "[buscarTrayectosPorEvento] Ciudad geocodificada:",
+          ciudad,
+          userLat,
+          userLng,
+        );
+      } catch (e) {
+        return res.status(400).send({
+          status: "Error",
+          message: "No se pudo geocodificar la ciudad proporcionada",
+        });
+      }
+    } else {
+      return res.status(400).send({
+        status: "Error",
+        message: "Debes proporcionar lat/lng o ciudad",
+      });
+    }
   }
 
   const searchRadiusKm = parseFloat(radius) || SEARCH_DISTANCE_KM;
   const dir = (direccion ?? "").toString().trim().toLowerCase();
+  const f = (fecha ?? "").toString().trim();
 
   try {
     const { headers } = getAuthHeaders(req);
@@ -2105,6 +2135,13 @@ async function buscarTrayectosPorEvento(req, res) {
       where,
       orderBy: { hora: "asc" },
     });
+
+    if (f && /^\d{4}-\d{2}-\d{2}$/.test(f)) {
+      rows = rows.filter((t) => {
+        const trayectoDate = new Date(t.hora).toISOString().split("T")[0];
+        return trayectoDate === f;
+      });
+    }
 
     if (dir === "ida") {
       rows = rows.filter(
@@ -2178,6 +2215,9 @@ async function buscarTrayectosPorEvento(req, res) {
       evento_id: eventoId,
       user_location: { lat: userLat, lng: userLng },
       search_radius_km: searchRadiusKm,
+      ...(ciudad && { ciudad: String(ciudad).trim() }),
+      ...(f && { fecha: f }),
+      direccion: dir || null,
       total: data.length,
       trayectos: data,
     });
@@ -2583,6 +2623,59 @@ async function adminDeleteTrayecto(req, res) {
   }
 }
 
+async function getSearchHistory(req, res) {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).send({
+        status: "Error",
+        message: "Debes iniciar sesión para ver tu historial",
+      });
+    }
+
+    const page = Math.max(parseInt(req.query.page ?? "1", 10), 1);
+    const limit = Math.min(
+      Math.max(parseInt(req.query.limit ?? "20", 10), 1),
+      100,
+    );
+    const offset = (page - 1) * limit;
+
+    const where = { user_id: String(userId) };
+
+    const [total, rows] = await Promise.all([
+      prisma.trayectoSearchHistory.count({ where }),
+      prisma.trayectoSearchHistory.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        skip: offset,
+        take: limit,
+      }),
+    ]);
+
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
+
+    return res.status(200).json({
+      data: rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+        nextPage: page < totalPages ? page + 1 : null,
+        prevPage: page > 1 ? page - 1 : null,
+      },
+    });
+  } catch (error) {
+    console.error("Error en getSearchHistory:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error al obtener el historial de búsquedas",
+    });
+  }
+}
+
 export const TrayectosController = {
   crearTrayecto,
   crearTrayectoEvento,
@@ -2607,4 +2700,5 @@ export const TrayectosController = {
   adminGetTrayectoById,
   adminUpdateTrayecto,
   adminDeleteTrayecto,
+  getSearchHistory,
 };

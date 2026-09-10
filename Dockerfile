@@ -1,5 +1,5 @@
 # ---------- Build stage ----------
-FROM node:24.9.0-bookworm-slim AS builder
+FROM node:alpine AS builder
 
 WORKDIR /app
 
@@ -14,22 +14,19 @@ COPY prisma ./prisma
 RUN npx prisma generate
 
 # ---------- Production stage ----------
-FROM node:24.9.0-bookworm-slim AS production
+FROM node:alpine AS production
 
 WORKDIR /app
-
-# Crear usuario no-root por seguridad
-RUN groupmod -g 1001 -o node && usermod -u 1001 -o node
 
 # Copiar package.json y package-lock.json
 COPY package*.json ./
 
 # Instalar solo dependencias de producción
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci  && npm cache clean --force
 
 # Copiar el cliente de Prisma generado en el stage builder
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder --chown=node:node /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder --chown=node:node /app/node_modules/@prisma ./node_modules/@prisma
 
 # Copiar el código de la aplicación
 COPY --chown=node:node . .
@@ -41,5 +38,5 @@ USER node
 
 EXPOSE 4001
 
-# Usar node directamente en producción (sin nodemon)
-CMD ["node", "app/index.js"]
+# Sincronizar schema con la base de datos y arrancar la app
+CMD npx prisma db push && npx prisma generate && node app/index.js

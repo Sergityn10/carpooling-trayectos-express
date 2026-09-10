@@ -65,6 +65,7 @@ model Reserva {
   stripe_checkout_session_id    String?  @db.VarChar(255)
   stripe_payment_intent_id      String?  @db.VarChar(255)
   stripe_payment_intent_status  String?  @db.VarChar(50)
+  stripe_url                    String?  @db.Text
   trip_outcome                  String   @default("pending") @db.VarChar(20)
   trip_outcome_reason           String?  @db.Text
   trip_outcome_at               DateTime?
@@ -280,4 +281,27 @@ model CAEReport {
   @@index([status], name: "idx_cae_reports_status")
 
   @@map("cae_reports")
+}
+
+model TrayectoSearchHistory {
+  id              Int      @id @default(autoincrement())
+  user_id         String?  @db.VarChar(36)
+  origin          String   @db.VarChar(255)
+  destination     String   @db.VarChar(255)
+  search_date     String   @db.VarChar(10)
+  passengers      Int
+  origin_lat      Float?
+  origin_lng      Float?
+  destination_lat Float?
+  destination_lng Float?
+  results_count   Int      @default(0)
+  ip_address      String?  @db.VarChar(45)
+  user_agent      String?  @db.Text
+  created_at      DateTime @default(now())
+
+  @@index([user_id], name: "idx_search_history_user_id")
+  @@index([search_date], name: "idx_search_history_date")
+  @@index([origin(255), destination(255)], name: "idx_search_history_route")
+
+  @@map("trayecto_search_history")
 }

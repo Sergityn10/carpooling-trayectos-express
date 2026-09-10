@@ -93,6 +93,86 @@ GET /api/trayecto/search
 | `plazas`    | Int    | Plazas mínimas requeridas     |
 | `evento_id` | UUID   | Filtrar por evento            |
 
+> **Nota:** Cada búsqueda se registra automáticamente en la tabla `trayecto_search_history` con origen, destino, fecha, pasajeros, coordenadas geocodificadas, número de resultados, IP y User-Agent. Si el usuario está autenticado, se asocia su `user_id`; si no, queda como anónimo.
+
+---
+
+### Obtener historial de búsquedas
+
+```
+GET /api/trayecto/search-history
+```
+
+**Auth:** Requerida
+
+**Descripción:** Devuelve el historial de búsquedas de trayectos del usuario autenticado, ordenado por fecha descendente (más recientes primero). Solo incluye búsquedas realizadas por el usuario autenticado.
+
+**Query params:**
+
+| Parámetro | Tipo | Descripción                                    |
+| --------- | ---- | ---------------------------------------------- |
+| `page`    | Int  | Página (por defecto 1)                         |
+| `limit`   | Int  | Elementos por página (por defecto 20, máx 100) |
+
+**Respuesta 200:**
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "user_id": "uuid",
+      "origin": "Madrid",
+      "destination": "Toledo",
+      "search_date": "2026-09-02",
+      "passengers": 2,
+      "origin_lat": 40.4168,
+      "origin_lng": -3.7038,
+      "destination_lat": 39.8628,
+      "destination_lng": -4.0229,
+      "results_count": 5,
+      "ip_address": "192.168.1.1",
+      "user_agent": "Mozilla/5.0 ...",
+      "created_at": "2026-09-02T07:50:00.000Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 35,
+    "totalPages": 2,
+    "hasNext": true,
+    "hasPrev": false,
+    "nextPage": 2,
+    "prevPage": null
+  }
+}
+```
+
+**Modelo de datos `trayecto_search_history`:**
+
+| Campo             | Tipo     | Descripción                             |
+| ----------------- | -------- | --------------------------------------- |
+| `id`              | Int      | Autoincrement                           |
+| `user_id`         | UUID?    | ID del usuario (null si anónimo)        |
+| `origin`          | String   | Origen buscado                          |
+| `destination`     | String   | Destino buscado                         |
+| `search_date`     | String   | Fecha del trayecto buscado (YYYY-MM-DD) |
+| `passengers`      | Int      | Número de pasajeros                     |
+| `origin_lat`      | Float?   | Latitud geocodificada del origen        |
+| `origin_lng`      | Float?   | Longitud geocodificada del origen       |
+| `destination_lat` | Float?   | Latitud geocodificada del destino       |
+| `destination_lng` | Float?   | Longitud geocodificada del destino      |
+| `results_count`   | Int      | Número de resultados encontrados        |
+| `ip_address`      | String?  | IP del usuario                          |
+| `user_agent`      | String?  | User-Agent del navegador                |
+| `created_at`      | DateTime | Timestamp de la búsqueda                |
+
+**Errores:**
+
+- `401` — No autenticado.
+- `500` — Error en el servidor.
+
 ---
 
 ### Obtener mis trayectos (como conductor)
@@ -296,6 +376,91 @@ GET /api/trayecto/evento/:eventoId
 ```
 
 **Auth:** Opcional
+
+---
+
+### Buscar trayectos por evento cerca de tu ubicación
+
+```
+GET /api/trayecto/evento/:eventoId/cerca
+```
+
+**Auth:** Opcional
+
+**Descripción:** Busca trayectos asociados a un evento concreto que pasen cerca de la ubicación del usuario. Permite buscar por coordenadas (`lat`/`lng`) o por nombre de ciudad (se geocodifica automáticamente). Obtiene las coordenadas del evento desde el microservicio de usuarios y filtra los trayectos según dirección (ida/vuelta), fecha y proximidad.
+
+**Path params:**
+
+| Parámetro  | Tipo          | Descripción   |
+| ---------- | ------------- | ------------- |
+| `eventoId` | string (UUID) | ID del evento |
+
+**Query params:**
+
+| Parámetro   | Tipo   | Requerido | Descripción                                                              |
+| ----------- | ------ | --------- | ------------------------------------------------------------------------ |
+| `lat`       | Float  | Sí*       | Latitud de tu ubicación actual                                           |
+| `lng`       | Float  | Sí*       | Longitud de tu ubicación actual                                          |
+| `ciudad`    | String | Sí*       | Nombre de ciudad (alternativa a lat/lng, se geocodifica automáticamente) |
+| `radius`    | Float  | No        | Radio de búsqueda en km (por defecto 0.2 km = 200 m)                     |
+| `direccion` | String | No        | `ida` (trayectos que van al evento) o `vuelta` (trayectos que vuelven)   |
+| `fecha`     | String | No        | Filtrar por fecha del trayecto en formato `YYYY-MM-DD`                   |
+
+> *\*Debes proporcionar `lat`+`lng` **o** `ciudad`. Si se proporcionan ambos, se usa `lat`/`lng`.*
+
+**Lógica de filtrado:**
+
+1. Obtiene las coordenadas del evento desde el microservicio de usuarios
+2. Filtra trayectos con `evento_id` = `eventoId`, plazas disponibles y estado activo
+3. Si `fecha` se especifica, filtra por la fecha del trayecto
+4. Si `direccion=ida`: filtra trayectos cuyo destino coincide con la ubicación del evento
+5. Si `direccion=vuelta`: filtra trayectos cuyo origen coincide con la ubicación del evento
+6. Calcula con Haversine qué trayectos pasan cerca del usuario (origen o tramos intermedios dentro del radio)
+
+**Ejemplos de uso:**
+
+```
+GET /api/trayecto/evento/550e8400.../cerca?lat=40.4168&lng=-3.7038&radius=5&direccion=ida
+GET /api/trayecto/evento/550e8400.../cerca?ciudad=Madrid&direccion=ida&fecha=2026-09-15
+GET /api/trayecto/evento/550e8400.../cerca?ciudad=Toledo&radius=10&direccion=vuelta
+```
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "evento_id": "550e8400-e29b-41d4-a716-446655440000",
+  "user_location": { "lat": 40.4168, "lng": -3.7038 },
+  "search_radius_km": 5,
+  "ciudad": "Madrid",
+  "fecha": "2026-09-15",
+  "direccion": "ida",
+  "total": 3,
+  "trayectos": [
+    {
+      "id": "uuid",
+      "origen": "Madrid Centro",
+      "destino": "Palacio Vistalegre",
+      "hora": "2026-09-15T18:00:00.000Z",
+      "plazas": 4,
+      "disponible": 2,
+      "precio": 5,
+      "conductor": "Juan Pérez",
+      "conductor_id": "uuid",
+      "img_perfil": "https://...",
+      "valorado": false,
+      "distancia_km": 1.23
+    }
+  ]
+}
+```
+
+**Errores:**
+
+- `400` — Falta `eventoId`, o no se proporcionó `lat`/`lng` ni `ciudad`, o no se pudo geocodificar la ciudad.
+- `404` — No se pudieron obtener las coordenadas del evento.
+- `500` — Error en el servidor.
 
 ---
 

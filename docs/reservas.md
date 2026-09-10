@@ -12,7 +12,9 @@ POST /api/reserva
 
 **Autenticación:** Requerida (`authenticate`)
 
-**Descripción:** Crea una reserva para un trayecto. Verifica disponibilidad, crea una sesión de pago en Stripe (Checkout Session) mediante el microservicio de usuarios, y une al pasajero al chat del trayecto. Si ya existe una reserva pendiente, la reutiliza.
+**Descripción:** Crea una reserva para un trayecto. Verifica disponibilidad, publica un evento RabbitMQ (`reserva.created.free` o `reserva.created.payment_required`) para que el microservicio de pagos genere la sesión de Stripe, y une al pasajero al chat del trayecto. Si ya existe una reserva pendiente, la reutiliza.
+
+> **Nota:** Para trayectos de pago, la URL de Stripe ya no se devuelve en la respuesta. El frontend debe hacer polling al endpoint `GET /api/reserva/:id/payment-link` hasta obtener el `stripe_url`.
 
 **Body (JSON):**
 
@@ -28,20 +30,34 @@ POST /api/reserva
 | `user_id`     | string (UUID) | Sí        | UUID del usuario  |
 | `trayecto_id` | string (UUID) | Sí        | UUID del trayecto |
 
-**Respuesta 201:**
+**Respuesta 201 (trayecto gratuito):**
 
 ```json
 {
   "status": "Success",
-  "message": "Reserva creada correctamente",
+  "message": "Reserva creada y confirmada correctamente (trayecto gratuito)",
   "reserva": {
     "id": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "conductorName": "Juan Pérez",
-    "trayecto_id": "550e8400-e29b-41d4-a716-446655440000",
-    "stripe_checkout_session_id": "cs_test_123"
+    "trayecto_id": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+**Respuesta 201 (trayecto de pago):**
+
+```json
+{
+  "status": "Success",
+  "message": "Reserva creada correctamente. Pendiente de pago.",
+  "reserva": {
+    "id": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "conductorName": "Juan Pérez",
+    "trayecto_id": "550e8400-e29b-41d4-a716-446655440000"
   },
-  "stripe_url": "https://checkout.stripe.com/..."
+  "payment_link_endpoint": "/api/reserva/r1b2c3d4-e5f6-7890-abcd-ef1234567890/payment-link"
 }
 ```
 
@@ -276,6 +292,94 @@ POST /api/reserva/:id/issue
 - `401` — No tienes permiso (solo el conductor puede reclamar).
 - `404` — Reserva no encontrada.
 - `409` — El viaje ya fue confirmado como exitoso.
+
+---
+
+### 7. Retomar pago de reserva
+
+```
+POST /api/reserva/resume
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Publica un evento RabbitMQ (`reserva.payment.resume`) para que el microservicio de pagos genere una nueva sesión de checkout. La URL de pago no se devuelve en la respuesta; el frontend debe hacer polling al endpoint `GET /api/reserva/:id/payment-link`.
+
+**Body (JSON):**
+
+```json
+{
+  "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "return_url": "https://frontend.com/pago"
+}
+```
+
+| Campo        | Tipo          | Requerido | Descripción             |
+| ------------ | ------------- | --------- | ----------------------- |
+| `id_reserva` | string (UUID) | Sí        | ID de la reserva        |
+| `return_url` | string        | No        | URL de retorno opcional |
+
+**Respuesta 200:**
+
+```json
+{
+  "status": "Success",
+  "message": "Evento de retomar pago publicado correctamente",
+  "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "payment_link_endpoint": "/api/reserva/r1b2c3d4-e5f6-7890-abcd-ef1234567890/payment-link"
+}
+```
+
+**Errores:**
+
+- `400` — Falta `id_reserva`, la reserva no está pendiente, o el trayecto es gratuito.
+- `403` — No tienes permiso sobre esta reserva.
+- `404` — Reserva no encontrada.
+
+---
+
+### 7b. Obtener link de pago
+
+```
+GET /api/reserva/:id/payment-link
+```
+
+**Autenticación:** Requerida (`authenticate`)
+
+**Descripción:** Devuelve el `stripe_url` guardado en la reserva. El microservicio de pagos publica el evento `payment.link.created` cuando crea la sesión de checkout, y este microservicio lo guarda en el campo `stripe_url` de la reserva. El frontend debe hacer polling a este endpoint hasta obtener la URL.
+
+**Path params:**
+
+| Parámetro | Tipo          | Descripción                     |
+| --------- | ------------- | ------------------------------- |
+| `id`      | string (UUID) | ID de la reserva (`id_reserva`) |
+
+**Respuesta 200 (link disponible):**
+
+```json
+{
+  "status": "Success",
+  "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "stripe_url": "https://checkout.stripe.com/c/pay/cs_...",
+  "stripe_checkout_session_id": "cs_test_123"
+}
+```
+
+**Respuesta 202 (link aún no disponible):**
+
+```json
+{
+  "status": "Pending",
+  "message": "El link de pago aún no está disponible. Inténtalo de nuevo en unos segundos.",
+  "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+**Errores:**
+
+- `400` — La reserva no está pendiente.
+- `403` — No tienes permiso sobre esta reserva.
+- `404` — Reserva no encontrada.
 
 ---
 

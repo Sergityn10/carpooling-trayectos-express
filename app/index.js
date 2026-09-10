@@ -22,6 +22,7 @@ import { OilPriceProvider } from "./providers/precio-oil.js";
 import { CAEUtils } from "./utils/cae.js";
 import { AdminController } from "./controllers/admin.js";
 import { startRabbitMQ } from "./rabbitmq/index.js";
+import { trackTrayectoSearch } from "./middleware/search-tracker.js";
 
 const app = express();
 app.set("etag", false);
@@ -81,6 +82,7 @@ app.get("/api/trayecto", utilsAuthentication.authenticate, async (req, res) => {
 app.get(
   "/api/trayecto/search",
   utilsAuthentication.tryAuthenticate,
+  trackTrayectoSearch,
   async (req, res) => {
     TrayectosController.buscarTrayectos(req, res);
   },
@@ -91,6 +93,14 @@ app.get(
   utilsAuthentication.authenticate,
   async (req, res) => {
     TrayectosController.obtenerMisTrayectos(req, res);
+  },
+);
+
+app.get(
+  "/api/trayecto/search-history",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    TrayectosController.getSearchHistory(req, res);
   },
 );
 
@@ -682,6 +692,14 @@ app.post(
   utilsAuthentication.authenticate,
   async (req, res) => {
     ReservaController.retomarPagoReserva(req, res);
+  },
+);
+
+app.get(
+  "/api/reserva/:id/payment-link",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    ReservaController.getPaymentLink(req, res);
   },
 );
 

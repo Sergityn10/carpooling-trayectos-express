@@ -541,6 +541,11 @@ async function addReserva(req, res) {
       ? "Reserva creada y confirmada correctamente (trayecto gratuito)"
       : "Reserva creada correctamente. Pendiente de pago.",
     reserva: newReserva,
+    ...(isFree
+      ? {}
+      : {
+          payment_link_endpoint: `/api/reserva/${reservaId}/payment-link`,
+        }),
   });
 }
 
@@ -1148,6 +1153,8 @@ async function retomarPagoReserva(req, res) {
   return res.status(200).send({
     status: "Success",
     message: "Evento de retomar pago publicado correctamente",
+    id_reserva: reserva.id_reserva,
+    payment_link_endpoint: `/api/reserva/${reserva.id_reserva}/payment-link`,
   });
 }
 
@@ -1796,6 +1803,64 @@ async function getPublicProfile(req, res) {
   }
 }
 
+async function getPaymentLink(req, res) {
+  const { id } = req.params;
+  const userId = req.user.userId;
+
+  if (!id) {
+    return res
+      .status(400)
+      .send({ status: "Error", message: "id_reserva es obligatorio" });
+  }
+
+  const reserva = await prisma.reserva.findUnique({
+    where: { id_reserva: String(id) },
+    select: {
+      id_reserva: true,
+      user_id: true,
+      status: true,
+      stripe_url: true,
+      stripe_checkout_session_id: true,
+    },
+  });
+
+  if (!reserva) {
+    return res
+      .status(404)
+      .send({ status: "Error", message: "Reserva no encontrada" });
+  }
+
+  if (reserva.user_id !== userId) {
+    return res.status(403).send({
+      status: "Error",
+      message: "No tienes permiso sobre esta reserva",
+    });
+  }
+
+  if (reserva.status !== RESERVA_STATUS.PENDING) {
+    return res.status(400).send({
+      status: "Error",
+      message: "Solo se puede obtener el link de pago de reservas pendientes",
+    });
+  }
+
+  if (!reserva.stripe_url) {
+    return res.status(202).send({
+      status: "Pending",
+      message:
+        "El link de pago aún no está disponible. Inténtalo de nuevo en unos segundos.",
+      id_reserva: reserva.id_reserva,
+    });
+  }
+
+  return res.status(200).send({
+    status: "Success",
+    id_reserva: reserva.id_reserva,
+    stripe_url: reserva.stripe_url,
+    stripe_checkout_session_id: reserva.stripe_checkout_session_id,
+  });
+}
+
 export const ReservaController = {
   addReserva,
   deleteReserva,
@@ -1804,6 +1869,7 @@ export const ReservaController = {
   confirmarViajeExitoso,
   reclamarViaje,
   retomarPagoReserva,
+  getPaymentLink,
   actualizarStatusReserva,
   reservaQR,
   capturarPagosTrayecto,

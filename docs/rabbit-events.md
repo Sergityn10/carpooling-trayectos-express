@@ -90,6 +90,54 @@ Se emite cuando un usuario quiere retomar el pago de una reserva pendiente. El m
 
 ---
 
+## Eventos consumidos (recibidos de otros microservicios)
+
+### `payment.link.created`
+
+Se recibe del microservicio de pagos cuando se crea una sesión de checkout de Stripe. Contiene la URL de pago que el frontend debe usar. Se guarda en el campo `stripe_url` de la reserva.
+
+| Campo                        | Tipo     | Descripción                            |
+| ---------------------------- | -------- | -------------------------------------- |
+| `id_reserva`                 | `string` | ID de la reserva                       |
+| `stripe_url`                 | `string` | URL de checkout de Stripe              |
+| `stripe_checkout_session_id` | `string` | (Opcional) ID de la sesión de checkout |
+
+**Handler:** `consumer.js` (`handlePaymentLinkCreated`)
+
+**Acción:** Actualiza la reserva con `stripe_url` y opcionalmente `stripe_checkout_session_id`.
+
+---
+
+### `payment_intent.succeeded`
+
+Se recibe del microservicio de pagos cuando un payment intent se completa con éxito.
+
+**Handler:** `consumer.js` (`handlePaymentIntentSucceeded`)
+
+**Acción:** Marca la reserva como `completed` y guarda el `stripe_payment_intent_id`.
+
+---
+
+### `payment_intent.failed`
+
+Se recibe del microservicio de pagos cuando un payment intent falla.
+
+**Handler:** `consumer.js` (`handlePaymentIntentFailed`)
+
+**Acción:** Cancela la reserva y libera la plaza del trayecto.
+
+---
+
+### `payment_intent.canceled`
+
+Se recibe del microservicio de pagos cuando un payment intent se cancela.
+
+**Handler:** `consumer.js` (`handlePaymentIntentCanceled`)
+
+**Acción:** Cancela la reserva y libera la plaza del trayecto.
+
+---
+
 ## Patrones de suscripción
 
 Para consumir eventos desde otro microservicio, usar routing key patterns del exchange `topic`:

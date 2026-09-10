@@ -237,6 +237,46 @@ async function handlePaymentIntentCanceled(data) {
   console.log(`[EventConsumer] Reserva ${id_reserva} cancelada`);
 }
 
+async function handlePaymentLinkCreated(data) {
+  console.log(
+    `[EventConsumer] payment.link.created - Payload completo:`,
+    JSON.stringify(data, null, 2),
+  );
+
+  const { id_reserva, stripe_url, stripe_checkout_session_id } = data;
+  if (!id_reserva || !stripe_url) {
+    console.log(
+      `[EventConsumer] payment.link.created - Faltan id_reserva o stripe_url`,
+    );
+    return;
+  }
+
+  const reserva = await prisma.reserva.findUnique({
+    where: { id_reserva: String(id_reserva) },
+  });
+
+  if (!reserva) {
+    console.log(
+      `[EventConsumer] payment.link.created - Reserva ${id_reserva} no encontrada`,
+    );
+    return;
+  }
+
+  const updateData = { stripe_url: String(stripe_url) };
+  if (stripe_checkout_session_id) {
+    updateData.stripe_checkout_session_id = String(stripe_checkout_session_id);
+  }
+
+  await prisma.reserva.update({
+    where: { id_reserva: String(id_reserva) },
+    data: updateData,
+  });
+
+  console.log(
+    `[EventConsumer] payment.link.created - stripe_url guardada para reserva ${id_reserva}`,
+  );
+}
+
 async function handlePlatformEventDeleted(data) {
   const { event_id } = data;
   if (!event_id) return;
@@ -294,6 +334,7 @@ const EVENT_HANDLERS = {
   "payment_intent.succeeded": handlePaymentIntentSucceeded,
   "payment_intent.failed": handlePaymentIntentFailed,
   "payment_intent.canceled": handlePaymentIntentCanceled,
+  "payment.link.created": handlePaymentLinkCreated,
   "platform_event.deleted": handlePlatformEventDeleted,
 };
 
@@ -316,6 +357,7 @@ const BIND_PATTERNS = [
   "payment_intent.succeeded",
   "payment_intent.failed",
   "payment_intent.canceled",
+  "payment.link.created",
   "platform_event.deleted",
 ];
 
