@@ -12,6 +12,7 @@ import {
   TRAYECTO_STATUS,
 } from "../constants/statuses.js";
 import { RabbitMQ } from "../rabbitmq/connection.js";
+import { PaymentsAPI } from "../utils/payments-api.js";
 
 import Stripe from "stripe";
 dotenv.config();
@@ -363,6 +364,9 @@ async function addReserva(req, res) {
   const netoConComision = trayecto.precio_conductor + comision;
   const totalAmount = Math.round(netoConComision * 100);
 
+  let stripe_url = null;
+  let stripe_checkout_session_id = null;
+
   if (isFree) {
     RabbitMQ.publishEvent("reserva.created.free", {
       id_reserva: duplicado ? reserva.id_reserva : reservaId,
@@ -373,28 +377,45 @@ async function addReserva(req, res) {
       is_free: true,
     });
   } else {
-    RabbitMQ.publishEvent("reserva.created.payment_required", {
-      id_reserva: duplicado ? reserva.id_reserva : reservaId,
-      user_id: userId,
-      trayecto_id,
-      conductor_id: String(trayecto.conductor),
-      status: RESERVA_STATUS.PENDING,
-      is_free: false,
-      payment: {
-        amount: totalAmount,
-        currency: "eur",
-        recipient_user_id: String(trayecto.conductor),
-        description:
-          "Reserva de trayecto: " +
-          trayecto_id +
-          " desde " +
-          trayecto.origen +
-          " hasta " +
-          trayecto.destino,
-        success_url: frontend_url + "/trayecto/" + trayecto_id,
-        cancel_url: frontend_url + "/trayecto/" + trayecto_id,
-      },
-    });
+    try {
+      const checkoutResult = await PaymentsAPI.createCheckoutSession(
+        {
+          id_reserva: duplicado ? reserva.id_reserva : reservaId,
+          amount: totalAmount,
+          currency: "eur",
+          recipient_user_id: String(trayecto.conductor),
+          description:
+            "Reserva de trayecto: " +
+            trayecto_id +
+            " desde " +
+            trayecto.origen +
+            " hasta " +
+            trayecto.destino,
+          success_url: frontend_url + "/trayecto/" + trayecto_id,
+          cancel_url: frontend_url + "/trayecto/" + trayecto_id,
+        },
+        { headers },
+      );
+
+      await prisma.reserva.update({
+        where: { id_reserva: duplicado ? reserva.id_reserva : reservaId },
+        data: {
+          stripe_url: checkoutResult.checkout_url,
+          stripe_checkout_session_id: checkoutResult.checkout_session_id,
+          ...(checkoutResult.payment_intent_id
+            ? { stripe_payment_intent_id: checkoutResult.payment_intent_id }
+            : {}),
+        },
+      });
+
+      stripe_url = checkoutResult.checkout_url;
+      stripe_checkout_session_id = checkoutResult.checkout_session_id;
+    } catch (error) {
+      console.error(
+        "Error al crear sesión de checkout:",
+        error?.message ?? error,
+      );
+    }
   }
 
   // Unirse al chat del trayecto
@@ -544,7 +565,8 @@ async function addReserva(req, res) {
     ...(isFree
       ? {}
       : {
-          payment_link_endpoint: `/api/reserva/${reservaId}/payment-link`,
+          stripe_url,
+          stripe_checkout_session_id,
         }),
   });
 }
@@ -1128,34 +1150,57 @@ async function retomarPagoReserva(req, res) {
   const netoConComisionRetomar = trayecto.precio_conductor + comisionRetomar;
   const totalAmount = Math.round(netoConComisionRetomar * 100);
 
-  RabbitMQ.publishEvent("reserva.payment.resume", {
-    id_reserva: reserva.id_reserva,
-    user_id: userId,
-    trayecto_id: reserva.id_trayecto,
-    conductor_id: String(trayecto.conductor),
-    return_url: return_url || undefined,
-    payment: {
-      amount: totalAmount,
-      currency: "eur",
-      recipient_user_id: String(trayecto.conductor),
-      description:
-        "Reserva de trayecto: " +
-        reserva.id_trayecto +
-        " desde " +
-        trayecto.origen +
-        " hasta " +
-        trayecto.destino,
-      success_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
-      cancel_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
-    },
-  });
+  const { token, headers } = getAuthHeaders(req);
+  if (!token) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
 
-  return res.status(200).send({
-    status: "Success",
-    message: "Evento de retomar pago publicado correctamente",
-    id_reserva: reserva.id_reserva,
-    payment_link_endpoint: `/api/reserva/${reserva.id_reserva}/payment-link`,
-  });
+  try {
+    const resumeResult = await PaymentsAPI.resumePaymentSession(
+      {
+        id_reserva: reserva.id_reserva,
+        amount: totalAmount,
+        currency: "eur",
+        recipient_user_id: String(trayecto.conductor),
+        description:
+          "Reserva de trayecto: " +
+          reserva.id_trayecto +
+          " desde " +
+          trayecto.origen +
+          " hasta " +
+          trayecto.destino,
+        success_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
+        cancel_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
+        return_url: return_url || undefined,
+      },
+      { headers },
+    );
+
+    await prisma.reserva.update({
+      where: { id_reserva: reserva.id_reserva },
+      data: {
+        stripe_url: resumeResult.checkout_url,
+        stripe_checkout_session_id: resumeResult.checkout_session_id,
+        ...(resumeResult.payment_intent_id
+          ? { stripe_payment_intent_id: resumeResult.payment_intent_id }
+          : {}),
+      },
+    });
+
+    return res.status(200).send({
+      status: "Success",
+      message: "Pago reanudado correctamente",
+      id_reserva: reserva.id_reserva,
+      stripe_url: resumeResult.checkout_url,
+      stripe_checkout_session_id: resumeResult.checkout_session_id,
+    });
+  } catch (error) {
+    console.error("Error al reanudar pago:", error?.message ?? error);
+    return res.status(502).send({
+      status: "Error",
+      message: error?.message ?? "Error al reanudar el pago",
+    });
+  }
 }
 
 async function capturarPagosTrayecto(trayectoId) {
@@ -1485,43 +1530,69 @@ async function reservaQR(req, res) {
     const netoConComision = Number(trayecto.precio_conductor) + comision;
     const totalAmount = Math.round(netoConComision * 100);
 
-    RabbitMQ.publishEvent("reserva.created.payment_required", {
-      id_reserva: reservaId,
-      user_id: userId,
-      trayecto_id,
-      conductor_id: String(trayecto.conductor),
-      status: RESERVA_STATUS.PENDING,
-      is_free: false,
-      payment: {
-        amount: totalAmount,
-        currency: "eur",
-        recipient_user_id: String(trayecto.conductor),
-        description:
-          "Reserva QR: " +
-          trayecto_id +
-          " desde " +
-          trayecto.origen +
-          " hasta " +
-          trayecto.destino,
-        success_url: frontend_url + "/trayecto/" + trayecto_id,
-        cancel_url: frontend_url + "/trayecto/" + trayecto_id,
-      },
-    });
-  }
+    try {
+      const checkoutResult = await PaymentsAPI.createCheckoutSession(
+        {
+          id_reserva: reservaId,
+          amount: totalAmount,
+          currency: "eur",
+          recipient_user_id: String(trayecto.conductor),
+          description:
+            "Reserva QR: " +
+            trayecto_id +
+            " desde " +
+            trayecto.origen +
+            " hasta " +
+            trayecto.destino,
+          success_url: frontend_url + "/trayecto/" + trayecto_id,
+          cancel_url: frontend_url + "/trayecto/" + trayecto_id,
+        },
+        { headers: getAuthHeaders(req).headers },
+      );
 
-  if (!isFree) {
-    return res.status(201).send({
-      status: "Success",
-      message:
-        "Reserva creada en estado pendiente. Se requiere completar el pago.",
-      requires_payment: true,
-      reserva: {
-        id: reservaId,
-        user_id: userId,
-        trayecto_id,
-        status: RESERVA_STATUS.PENDING,
-      },
-    });
+      await prisma.reserva.update({
+        where: { id_reserva: reservaId },
+        data: {
+          stripe_url: checkoutResult.checkout_url,
+          stripe_checkout_session_id: checkoutResult.checkout_session_id,
+          ...(checkoutResult.payment_intent_id
+            ? { stripe_payment_intent_id: checkoutResult.payment_intent_id }
+            : {}),
+        },
+      });
+
+      return res.status(201).send({
+        status: "Success",
+        message:
+          "Reserva creada en estado pendiente. Se requiere completar el pago.",
+        requires_payment: true,
+        stripe_url: checkoutResult.checkout_url,
+        stripe_checkout_session_id: checkoutResult.checkout_session_id,
+        reserva: {
+          id: reservaId,
+          user_id: userId,
+          trayecto_id,
+          status: RESERVA_STATUS.PENDING,
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Error al crear sesión de checkout (QR):",
+        error?.message ?? error,
+      );
+      return res.status(201).send({
+        status: "Success",
+        message:
+          "Reserva creada en estado pendiente. Se requiere completar el pago.",
+        requires_payment: true,
+        reserva: {
+          id: reservaId,
+          user_id: userId,
+          trayecto_id,
+          status: RESERVA_STATUS.PENDING,
+        },
+      });
+    }
   }
 
   return res.status(201).send({
@@ -1803,64 +1874,6 @@ async function getPublicProfile(req, res) {
   }
 }
 
-async function getPaymentLink(req, res) {
-  const { id } = req.params;
-  const userId = req.user.userId;
-
-  if (!id) {
-    return res
-      .status(400)
-      .send({ status: "Error", message: "id_reserva es obligatorio" });
-  }
-
-  const reserva = await prisma.reserva.findUnique({
-    where: { id_reserva: String(id) },
-    select: {
-      id_reserva: true,
-      user_id: true,
-      status: true,
-      stripe_url: true,
-      stripe_checkout_session_id: true,
-    },
-  });
-
-  if (!reserva) {
-    return res
-      .status(404)
-      .send({ status: "Error", message: "Reserva no encontrada" });
-  }
-
-  if (reserva.user_id !== userId) {
-    return res.status(403).send({
-      status: "Error",
-      message: "No tienes permiso sobre esta reserva",
-    });
-  }
-
-  if (reserva.status !== RESERVA_STATUS.PENDING) {
-    return res.status(400).send({
-      status: "Error",
-      message: "Solo se puede obtener el link de pago de reservas pendientes",
-    });
-  }
-
-  if (!reserva.stripe_url) {
-    return res.status(202).send({
-      status: "Pending",
-      message:
-        "El link de pago aún no está disponible. Inténtalo de nuevo en unos segundos.",
-      id_reserva: reserva.id_reserva,
-    });
-  }
-
-  return res.status(200).send({
-    status: "Success",
-    id_reserva: reserva.id_reserva,
-    stripe_url: reserva.stripe_url,
-    stripe_checkout_session_id: reserva.stripe_checkout_session_id,
-  });
-}
-
 export const ReservaController = {
   addReserva,
   deleteReserva,
@@ -1869,7 +1882,6 @@ export const ReservaController = {
   confirmarViajeExitoso,
   reclamarViaje,
   retomarPagoReserva,
-  getPaymentLink,
   actualizarStatusReserva,
   reservaQR,
   capturarPagosTrayecto,

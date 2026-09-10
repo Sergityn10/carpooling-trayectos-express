@@ -61,7 +61,7 @@ let list_origins = [
   "http://localhost:5174",
   "http://localhost:3000",
   "https://www.youconnext.es",
-"https://admin.youconnext.es"
+  "https://admin.youconnext.es",
 ];
 //Middewares
 app.use(express.json());
@@ -692,14 +692,6 @@ app.post(
   utilsAuthentication.authenticate,
   async (req, res) => {
     ReservaController.retomarPagoReserva(req, res);
-  },
-);
-
-app.get(
-  "/api/reserva/:id/payment-link",
-  utilsAuthentication.authenticate,
-  async (req, res) => {
-    ReservaController.getPaymentLink(req, res);
   },
 );
 

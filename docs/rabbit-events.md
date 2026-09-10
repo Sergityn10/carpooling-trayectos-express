@@ -43,9 +43,9 @@ Se emite cuando se crea una reserva para un trayecto gratuito (precio_conductor 
 
 ---
 
-### `reserva.created.payment_required`
+### `reserva.created.payment_required` (DEPRECATED)
 
-Se emite cuando se crea una reserva para un trayecto de pago. La reserva queda en estado `pending` hasta que el microservicio de pagos confirme el pago.
+> **Deprecado:** La creación de sesiones de pago ahora se realiza con una llamada HTTP síncrona a `POST /api/payment/payment-intent/checkout` en la API de pagos. El `stripe_url` se devuelve directamente en la respuesta de `POST /api/reserva`.
 
 | Campo                       | Tipo      | Descripción                              |
 | --------------------------- | --------- | ---------------------------------------- |
@@ -67,46 +67,13 @@ Se emite cuando se crea una reserva para un trayecto de pago. La reserva queda e
 
 ---
 
-### `reserva.payment.resume`
+### `reserva.payment.resume` (DEPRECATED)
 
-Se emite cuando un usuario quiere retomar el pago de una reserva pendiente. El microservicio de pagos debe generar una nueva sesión de checkout o reanudar la existente.
-
-| Campo                       | Tipo             | Descripción                              |
-| --------------------------- | ---------------- | ---------------------------------------- |
-| `id_reserva`                | `string`         | ID de la reserva                         |
-| `user_id`                   | `string`         | ID del usuario que retoma el pago        |
-| `trayecto_id`               | `string`         | ID del trayecto                          |
-| `conductor_id`              | `string`         | ID del conductor del trayecto            |
-| `return_url`                | `string \| null` | URL de retorno opcional                  |
-| `payment`                   | `object`         | Información del pago necesario           |
-| `payment.amount`            | `number`         | Importe total en céntimos (con comisión) |
-| `payment.currency`          | `string`         | Moneda (ej. `"eur"`)                     |
-| `payment.recipient_user_id` | `string`         | ID del conductor (receptor del pago)     |
-| `payment.description`       | `string`         | Descripción del pago                     |
-| `payment.success_url`       | `string`         | URL de redirección tras pago exitoso     |
-| `payment.cancel_url`        | `string`         | URL de redirección tras cancelación      |
-
-**Controladores que lo emiten:** `reserva.js` (`retomarPagoReserva`)
+> **Deprecado:** El pago ahora se gestiona con una llamada HTTP síncrona a `POST /api/payment/payment-intent/resume` en la API de pagos. El `stripe_url` se devuelve directamente en la respuesta.
 
 ---
 
 ## Eventos consumidos (recibidos de otros microservicios)
-
-### `payment.link.created`
-
-Se recibe del microservicio de pagos cuando se crea una sesión de checkout de Stripe. Contiene la URL de pago que el frontend debe usar. Se guarda en el campo `stripe_url` de la reserva.
-
-| Campo                        | Tipo     | Descripción                            |
-| ---------------------------- | -------- | -------------------------------------- |
-| `id_reserva`                 | `string` | ID de la reserva                       |
-| `stripe_url`                 | `string` | URL de checkout de Stripe              |
-| `stripe_checkout_session_id` | `string` | (Opcional) ID de la sesión de checkout |
-
-**Handler:** `consumer.js` (`handlePaymentLinkCreated`)
-
-**Acción:** Actualiza la reserva con `stripe_url` y opcionalmente `stripe_checkout_session_id`.
-
----
 
 ### `payment_intent.succeeded`
 
@@ -142,13 +109,12 @@ Se recibe del microservicio de pagos cuando un payment intent se cancela.
 
 Para consumir eventos desde otro microservicio, usar routing key patterns del exchange `topic`:
 
-| Pattern                            | Eventos recibidos                                |
-| ---------------------------------- | ------------------------------------------------ |
-| `reserva.created.free`             | Solo reservas gratuitas                          |
-| `reserva.created.payment_required` | Solo reservas que requieren pago                 |
-| `reserva.created.*`                | Todas las reservas creadas (gratuitas y de pago) |
-| `reserva.payment.resume`           | Solo retomar pago                                |
-| `reserva.*`                        | Todos los eventos de reservas                    |
+| Pattern                | Eventos recibidos                      |
+| ---------------------- | -------------------------------------- |
+| `reserva.created.free` | Solo reservas gratuitas                |
+| `reserva.created.*`    | Todas las reservas creadas (gratuitas) |
+| `payment_intent.*`     | Todos los eventos de estado de pago    |
+| `reserva.*`            | Todos los eventos de reservas          |
 
 ## Configuración de conexión
 

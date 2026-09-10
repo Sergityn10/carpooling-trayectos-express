@@ -12,9 +12,9 @@ POST /api/reserva
 
 **Autenticación:** Requerida (`authenticate`)
 
-**Descripción:** Crea una reserva para un trayecto. Verifica disponibilidad, publica un evento RabbitMQ (`reserva.created.free` o `reserva.created.payment_required`) para que el microservicio de pagos genere la sesión de Stripe, y une al pasajero al chat del trayecto. Si ya existe una reserva pendiente, la reutiliza.
+**Descripción:** Crea una reserva para un trayecto. Verifica disponibilidad, llama síncronamente a la API de pagos para crear una sesión de Stripe Checkout (en trayectos de pago), y une al pasajero al chat del trayecto. Si ya existe una reserva pendiente, la reutiliza.
 
-> **Nota:** Para trayectos de pago, la URL de Stripe ya no se devuelve en la respuesta. El frontend debe hacer polling al endpoint `GET /api/reserva/:id/payment-link` hasta obtener el `stripe_url`.
+> **Nota:** Para trayectos de pago, la URL de Stripe se devuelve directamente en la respuesta (`stripe_url`). No es necesario hacer polling.
 
 **Body (JSON):**
 
@@ -57,7 +57,8 @@ POST /api/reserva
     "conductorName": "Juan Pérez",
     "trayecto_id": "550e8400-e29b-41d4-a716-446655440000"
   },
-  "payment_link_endpoint": "/api/reserva/r1b2c3d4-e5f6-7890-abcd-ef1234567890/payment-link"
+  "stripe_url": "https://checkout.stripe.com/c/pay/cs_...",
+  "stripe_checkout_session_id": "cs_test_123"
 }
 ```
 
@@ -303,7 +304,7 @@ POST /api/reserva/resume
 
 **Autenticación:** Requerida (`authenticate`)
 
-**Descripción:** Publica un evento RabbitMQ (`reserva.payment.resume`) para que el microservicio de pagos genere una nueva sesión de checkout. La URL de pago no se devuelve en la respuesta; el frontend debe hacer polling al endpoint `GET /api/reserva/:id/payment-link`.
+**Descripción:** Llama síncronamente a la API de pagos (`/api/payment/payment-intent/resume`) para crear una nueva sesión de checkout de Stripe. Devuelve el `stripe_url` directamente en la respuesta.
 
 **Body (JSON):**
 
@@ -324,62 +325,20 @@ POST /api/reserva/resume
 ```json
 {
   "status": "Success",
-  "message": "Evento de retomar pago publicado correctamente",
-  "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "payment_link_endpoint": "/api/reserva/r1b2c3d4-e5f6-7890-abcd-ef1234567890/payment-link"
-}
-```
-
-**Errores:**
-
-- `400` — Falta `id_reserva`, la reserva no está pendiente, o el trayecto es gratuito.
-- `403` — No tienes permiso sobre esta reserva.
-- `404` — Reserva no encontrada.
-
----
-
-### 7b. Obtener link de pago
-
-```
-GET /api/reserva/:id/payment-link
-```
-
-**Autenticación:** Requerida (`authenticate`)
-
-**Descripción:** Devuelve el `stripe_url` guardado en la reserva. El microservicio de pagos publica el evento `payment.link.created` cuando crea la sesión de checkout, y este microservicio lo guarda en el campo `stripe_url` de la reserva. El frontend debe hacer polling a este endpoint hasta obtener la URL.
-
-**Path params:**
-
-| Parámetro | Tipo          | Descripción                     |
-| --------- | ------------- | ------------------------------- |
-| `id`      | string (UUID) | ID de la reserva (`id_reserva`) |
-
-**Respuesta 200 (link disponible):**
-
-```json
-{
-  "status": "Success",
+  "message": "Pago reanudado correctamente",
   "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "stripe_url": "https://checkout.stripe.com/c/pay/cs_...",
   "stripe_checkout_session_id": "cs_test_123"
 }
 ```
 
-**Respuesta 202 (link aún no disponible):**
-
-```json
-{
-  "status": "Pending",
-  "message": "El link de pago aún no está disponible. Inténtalo de nuevo en unos segundos.",
-  "id_reserva": "r1b2c3d4-e5f6-7890-abcd-ef1234567890"
-}
-```
-
 **Errores:**
 
-- `400` — La reserva no está pendiente.
+- `400` — Falta `id_reserva`, la reserva no está pendiente, o el trayecto es gratuito.
+- `401` — No autenticado.
 - `403` — No tienes permiso sobre esta reserva.
 - `404` — Reserva no encontrada.
+- `502` — Error en la API de pagos al crear la sesión de checkout.
 
 ---
 
