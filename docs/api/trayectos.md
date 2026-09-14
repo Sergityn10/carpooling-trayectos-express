@@ -175,7 +175,7 @@ GET /api/trayecto/search-history
 
 ---
 
-### Obtener mis trayectos (como conductor)
+### Obtener mis trayectos (como conductor y pasajero)
 
 ```
 GET /api/trayecto/mis-trayectos
@@ -183,7 +183,7 @@ GET /api/trayecto/mis-trayectos
 
 **Auth:** Requerida
 
-**Descripción:** Devuelve los trayectos del usuario autenticado como conductor, con paginación. Incluye nombre e imagen del conductor y campo `valorado`.
+**Descripción:** Devuelve los trayectos del usuario autenticado, tanto los que conduce como los que ha reservado como pasajero (reservas no canceladas), con paginación. Cada item incluye el campo `rol` (`conductor` o `pasajero`), nombre e imagen del conductor y campo `valorado`. Los trayectos como pasajero incluyen además `id_reserva` y `reserva_status`.
 
 **Query params:**
 
@@ -204,6 +204,19 @@ GET /api/trayecto/mis-trayectos
       "conductor": "Juan Pérez",
       "conductor_id": "uuid",
       "img_perfil": "https://...",
+      "rol": "conductor",
+      "valorado": false
+    },
+    {
+      "id": "uuid",
+      "origen": "Sevilla",
+      "destino": "Córdoba",
+      "conductor": "Ana López",
+      "conductor_id": "uuid",
+      "img_perfil": "https://...",
+      "rol": "pasajero",
+      "id_reserva": "uuid",
+      "reserva_status": "completed",
       "valorado": false
     }
   ],

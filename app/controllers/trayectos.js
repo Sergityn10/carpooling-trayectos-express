@@ -898,30 +898,92 @@ async function obtenerMisTrayectos(req, res) {
   }
 
   try {
-    const rows = await prisma.trayecto.findMany({
+    // Trayectos como conductor
+    const conductorRows = await prisma.trayecto.findMany({
       where: { conductor: id },
       orderBy: { hora: "desc" },
-      skip: offset,
-      take: limit,
     });
-    const total = await prisma.trayecto.count({ where: { conductor: id } });
 
+    // Trayectos como pasajero (vía reservas no canceladas)
+    const reservas = await prisma.reserva.findMany({
+      where: { user_id: id, NOT: { status: "canceled" } },
+      select: { id_trayecto: true, id_reserva: true, status: true },
+    });
+    const reservaByTrayecto = new Map();
+    for (const r of reservas) {
+      reservaByTrayecto.set(r.id_trayecto, r);
+    }
+    const passengerTrayectoIds = [...reservaByTrayecto.keys()].filter(
+      (tid) => !conductorRows.some((t) => t.id === tid),
+    );
+
+    let passengerRows = [];
+    if (passengerTrayectoIds.length > 0) {
+      passengerRows = await prisma.trayecto.findMany({
+        where: { id: { in: passengerTrayectoIds } },
+      });
+    }
+
+    // Combinar y ordenar por hora desc
+    const allRows = [
+      ...conductorRows.map((t) => ({ _row: t, _rol: "conductor" })),
+      ...passengerRows.map((t) => ({ _row: t, _rol: "pasajero" })),
+    ].sort((a, b) => b._row.hora.getTime() - a._row.hora.getTime());
+
+    const total = allRows.length;
+    const pageRows = allRows.slice(offset, offset + limit);
+
+    // Info del propio usuario (para rol conductor)
     const myInfo = await UsersAPI.fetchUserPublicInfo(String(id));
     const myName = myInfo?.name || "Yo";
     const myImg = myInfo?.img_perfil;
 
-    const ratedIds = await getRatedTrayectoIdsForUser(
-      id,
-      rows.map((t) => t.id),
+    // Info de conductores ajenos (para rol pasajero)
+    const foreignConductorIds = [
+      ...new Set(
+        pageRows
+          .filter((p) => p._rol === "pasajero")
+          .map((p) => p._row.conductor),
+      ),
+    ];
+    const foreignConductorInfo = {};
+    await Promise.all(
+      foreignConductorIds.map(async (cid) => {
+        const info = await UsersAPI.fetchUserPublicInfo(String(cid));
+        foreignConductorInfo[cid] = {
+          name: info?.name || "Desconocido",
+          img_perfil: info?.img_perfil,
+        };
+      }),
     );
 
-    const data = rows.map((t) => ({
-      ...t,
-      conductor: myName,
-      conductor_id: t.conductor,
-      img_perfil: myImg,
-      valorado: ratedIds.has(String(t.id)),
-    }));
+    const ratedIds = await getRatedTrayectoIdsForUser(
+      id,
+      pageRows.map((p) => p._row.id),
+    );
+
+    const data = pageRows.map(({ _row: t, _rol }) => {
+      const isConductor = _rol === "conductor";
+      const reserva = reservaByTrayecto.get(t.id);
+      const conductorInfo = isConductor
+        ? { name: myName, img_perfil: myImg }
+        : foreignConductorInfo[t.conductor] || {
+            name: "Desconocido",
+            img_perfil: undefined,
+          };
+      return {
+        ...t,
+        rol: _rol,
+        conductor: conductorInfo.name,
+        conductor_id: t.conductor,
+        img_perfil: conductorInfo.img_perfil,
+        valorado: ratedIds.has(String(t.id)),
+        ...(reserva && {
+          id_reserva: reserva.id_reserva,
+          reserva_status: reserva.status,
+        }),
+      };
+    });
 
     return res.status(200).json({
       data,
