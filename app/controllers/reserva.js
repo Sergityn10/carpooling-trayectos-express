@@ -181,18 +181,29 @@ async function notifyConductorNewReservation({
 }
 
 async function addReserva(req, res) {
+  console.log("[addReserva] Body recibido:", JSON.stringify(req.body));
   const validation = ReservaSchema.validateReservaSinId(req.body);
 
   // const token = req.cookies.access_token;
   const { token, headers } = getAuthHeaders(req);
   if (!validation.success) {
+    console.log("[addReserva] Validación falló:", validation.error.message);
     return res
       .status(400)
       .send({ status: "Error", message: JSON.parse(validation.error.message) });
   }
 
   const { trayecto_id, user_id } = validation.data;
+  const { return_url } = req.body;
   const userId = req.user.userId;
+  console.log(
+    "[addReserva] trayecto_id:",
+    trayecto_id,
+    "| user_id:",
+    user_id,
+    "| userId:",
+    userId,
+  );
 
   // Aquí iría la lógica para agregar la reserva a la base de datos
   console.log(
@@ -325,40 +336,6 @@ async function addReserva(req, res) {
       .send({ status: "Error", message: "Error al crear la reserva" });
   }
 
-  if (!MESSAGES_URL) {
-    if (!duplicado && decrementedDisponible) {
-      try {
-        await prisma.reserva.delete({ where: { id_reserva: reservaId } });
-        await prisma.trayecto.update({
-          where: { id: trayecto_id },
-          data: { disponible: { increment: 1 } },
-        });
-      } catch (e) {
-        console.error(
-          "Error haciendo rollback de reserva tras MESSAGES_URL missing:",
-          e,
-        );
-      }
-    } else if (duplicado && decrementedDisponible) {
-      // Restaurar disponible y marcar como canceled si era un duplicado re-activado
-      try {
-        await prisma.reserva.update({
-          where: { id_reserva: reservaId },
-          data: { status: RESERVA_STATUS.CANCELED },
-        });
-        await prisma.trayecto.update({
-          where: { id: trayecto_id },
-          data: { disponible: { increment: 1 } },
-        });
-      } catch (e) {
-        console.error("Error haciendo rollback de reserva duplicada:", e);
-      }
-    }
-    return res
-      .status(500)
-      .send({ status: "Error", message: "MESSAGES_URL no configurado" });
-  }
-
   // Publicar evento de reserva creada via RabbitMQ
   const comision = trayecto.precio_conductor * PLATFORM_COMMISSION_PERCENT;
   const netoConComision = trayecto.precio_conductor + comision;
@@ -381,6 +358,7 @@ async function addReserva(req, res) {
       const checkoutResult = await PaymentsAPI.createCheckoutSession(
         {
           id_reserva: duplicado ? reserva.id_reserva : reservaId,
+          trayecto_id: trayecto_id,
           amount: totalAmount,
           currency: "eur",
           recipient_user_id: String(trayecto.conductor),
@@ -391,8 +369,12 @@ async function addReserva(req, res) {
             trayecto.origen +
             " hasta " +
             trayecto.destino,
-          success_url: frontend_url + "/trayecto/" + trayecto_id,
-          cancel_url: frontend_url + "/trayecto/" + trayecto_id,
+          success_url: return_url
+            ? return_url
+            : frontend_url + "trayecto/" + trayecto_id,
+          cancel_url: return_url
+            ? return_url
+            : frontend_url + "trayecto/" + trayecto_id,
         },
         { headers },
       );
@@ -415,97 +397,23 @@ async function addReserva(req, res) {
         "Error al crear sesión de checkout:",
         error?.message ?? error,
       );
-    }
-  }
-
-  // Unirse al chat del trayecto
-  try {
-    const { token: authToken, headers } = getAuthHeaders(req);
-    if (!authToken) {
-      return res.status(401).send({
+      return res.status(502).send({
         status: "Error",
-        message: "No se proporcionó un token de acceso",
+        message:
+          "No se pudo crear la sesión de pago: " +
+          (error?.message ?? "Error desconocido"),
+        id_reserva: duplicado ? reserva.id_reserva : reservaId,
       });
     }
-
-    const chatResponse = await fetch(
-      `${MESSAGES_URL}/api/chats/trip/${trayecto_id}`,
-      {
-        method: "GET",
-        headers: {
-          ...headers,
-        },
-      },
-    );
-    const chatBody = await chatResponse.json().catch(() => null);
-    if (!chatResponse.ok) {
-      const msg = chatBody?.message ?? "Error al obtener el chat del trayecto";
-      throw new Error(msg);
-    }
-
-    const chatId =
-      chatBody.chat.id ??
-      chatBody?.chatId ??
-      chatBody?.id ??
-      chatBody?.data?.chatId ??
-      chatBody?.data?.id ??
-      null;
-
-    if (!chatId) {
-      throw new Error("No se pudo determinar chatId para el trayecto");
-    }
-
-    const joinResponse = await fetch(
-      `${MESSAGES_URL}/api/chats/${chatId}/join`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...headers,
-        },
-        body: JSON.stringify({}),
-      },
-    );
-
-    const joinBody = await joinResponse.json().catch(() => null);
-    if (!joinResponse.ok) {
-      const msg = joinBody?.message ?? "Error al unirse al chat del trayecto";
-      throw new Error(msg);
-    }
-  } catch (error) {
-    console.error("Error uniéndose al chat del trayecto:", error);
-    if (!duplicado && decrementedDisponible) {
-      try {
-        await prisma.reserva.delete({ where: { id_reserva: reservaId } });
-        await prisma.trayecto.update({
-          where: { id: trayecto_id },
-          data: { disponible: { increment: 1 } },
-        });
-      } catch (e) {
-        console.error(
-          "Error haciendo rollback de reserva tras fallo uniendo al chat:",
-          e,
-        );
-      }
-    } else if (duplicado && decrementedDisponible) {
-      try {
-        await prisma.reserva.update({
-          where: { id_reserva: reservaId },
-          data: { status: RESERVA_STATUS.CANCELED },
-        });
-        await prisma.trayecto.update({
-          where: { id: trayecto_id },
-          data: { disponible: { increment: 1 } },
-        });
-      } catch (e) {
-        console.error("Error haciendo rollback de reserva duplicada:", e);
-      }
-    }
-    return res.status(502).send({
-      status: "Error",
-      message: error?.message ?? "Error al unirse al chat del trayecto",
-    });
   }
+
+  // Publicar evento para que el microservicio de mensajes una al usuario al chat
+  RabbitMQ.publishEvent("reserva.chat.join", {
+    id_reserva: duplicado ? reserva.id_reserva : reservaId,
+    user_id: userId,
+    trayecto_id,
+    conductor_id: String(trayecto.conductor),
+  });
 
   reservaId = duplicado ? reserva.id_reserva : reservaId;
 
@@ -807,33 +715,6 @@ async function deleteReserva(req, res) {
   }
 
   try {
-    let trayectoId = reserva.id_trayecto;
-    let getChat = await fetch(
-      `${process.env.MESSAGES_URL}/api/chats/trip/${trayectoId}`,
-      {
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          ...headers,
-        },
-      },
-    ).then((res) => res.json());
-    console.log(getChat);
-    let chatId = getChat.chat.id;
-    //Eliminar al usuario del chat de grupo
-
-    let leaveChat = await fetch(
-      `${process.env.MESSAGES_URL}/api/chats/${chatId}/leave`,
-      {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          ...headers,
-        },
-      },
-    );
-
     await prisma.$transaction([
       prisma.reserva.update({
         where: { id_reserva: idReserva },
@@ -844,6 +725,13 @@ async function deleteReserva(req, res) {
         reserva.id_trayecto,
       ),
     ]);
+
+    // Publicar evento para que el microservicio de mensajes elimine al usuario del chat
+    RabbitMQ.publishEvent("reserva.chat.leave", {
+      id_reserva: idReserva,
+      user_id: req.user?.userId,
+      trayecto_id: reserva.id_trayecto,
+    });
   } catch (e) {
     if (e.code === "P2025") {
       return res
@@ -1093,6 +981,7 @@ async function reclamarViaje(req, res) {
 }
 async function retomarPagoReserva(req, res) {
   const { id_reserva, return_url } = req.body;
+  console.log(return_url);
   const userId = req.user.userId;
 
   if (!id_reserva) {
@@ -1156,9 +1045,15 @@ async function retomarPagoReserva(req, res) {
   }
 
   try {
+    const success_url =
+      return_url || frontend_url + "trayecto/" + reserva.id_trayecto;
+    const cancel_url =
+      return_url || frontend_url + "trayecto/" + reserva.id_trayecto;
+
     const resumeResult = await PaymentsAPI.resumePaymentSession(
       {
         id_reserva: reserva.id_reserva,
+        trayecto_id: reserva.id_trayecto,
         amount: totalAmount,
         currency: "eur",
         recipient_user_id: String(trayecto.conductor),
@@ -1169,9 +1064,8 @@ async function retomarPagoReserva(req, res) {
           trayecto.origen +
           " hasta " +
           trayecto.destino,
-        success_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
-        cancel_url: frontend_url + "/trayecto/" + reserva.id_trayecto,
-        return_url: return_url || undefined,
+        success_url,
+        cancel_url,
       },
       { headers },
     );
@@ -1534,6 +1428,7 @@ async function reservaQR(req, res) {
       const checkoutResult = await PaymentsAPI.createCheckoutSession(
         {
           id_reserva: reservaId,
+          trayecto_id: trayecto_id,
           amount: totalAmount,
           currency: "eur",
           recipient_user_id: String(trayecto.conductor),

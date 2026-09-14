@@ -33,9 +33,21 @@ async function createCheckoutSession(payload, { headers = {} } = {}) {
       throw new Error(msg);
     }
 
+    const checkout_url =
+      body.checkout_url ??
+      body.url ??
+      body.stripe_url ??
+      body.checkout_session?.url ??
+      null;
+    const checkout_session_id =
+      body.checkout_session_id ??
+      body.session_id ??
+      body.checkout_session?.id ??
+      null;
+
     return {
-      checkout_session_id: body.checkout_session_id ?? null,
-      checkout_url: body.checkout_url ?? null,
+      checkout_session_id,
+      checkout_url,
       payment_intent_id: body.payment_intent_id ?? null,
       pricing: body.pricing ?? null,
     };
@@ -72,15 +84,29 @@ async function resumePaymentSession(payload, { headers = {} } = {}) {
 
     const body = await res.json().catch(() => null);
 
+    console.log(`[PaymentsAPI] resume response status: ${res.status}`);
+
     if (!res.ok) {
       const msg =
         body?.message ?? body?.error ?? `Error ${res.status} al reanudar pago`;
       throw new Error(msg);
     }
 
+    const checkout_url =
+      body.checkout_url ??
+      body.url ??
+      body.stripe_url ??
+      body.checkout_session?.url ??
+      null;
+    const checkout_session_id =
+      body.checkout_session_id ??
+      body.session_id ??
+      body.checkout_session?.id ??
+      null;
+
     return {
-      checkout_session_id: body.checkout_session_id ?? null,
-      checkout_url: body.checkout_url ?? null,
+      checkout_session_id,
+      checkout_url,
       payment_intent_id: body.payment_intent_id ?? null,
       pricing: body.pricing ?? null,
     };

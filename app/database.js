@@ -11,6 +11,8 @@ const adapter = new PrismaMariaDb({
   database: process.env.DATABASE_NAME || "carpooling",
   port: Number(process.env.DATABASE_PORT) || 3306,
   connectionLimit: 5,
+  allowPublicKeyRetrieval: true,
+  ssl: false,
 });
 
 const prisma = new PrismaClient({ adapter });
