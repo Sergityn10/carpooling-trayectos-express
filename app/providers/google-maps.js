@@ -146,7 +146,7 @@ async function snapToRoads(points) {
   return snapped;
 }
 
-async function getDirections(origin, destination) {
+async function getDirections(origin, destination, routeIndex = 0) {
   const params = new URLSearchParams({
     origin: origin,
     destination: destination,
@@ -160,12 +160,18 @@ async function getDirections(origin, destination) {
 
   if (data.status !== "OK" || !data.routes || data.routes.length === 0) {
     console.warn(`[getDirections] No route found: ${data.status}`);
-    return [];
+    return { steps: [], distanceKm: null, durationSec: null };
   }
 
+  const route =
+    data.routes[Math.min(routeIndex, data.routes.length - 1)] ?? data.routes[0];
+
   const steps = [];
-  const route = data.routes[0];
+  let distanceMeters = 0;
+  let durationSec = 0;
   for (const leg of route.legs) {
+    distanceMeters += leg.distance?.value ?? 0;
+    durationSec += leg.duration?.value ?? 0;
     for (const step of leg.steps) {
       steps.push({
         lat: step.end_location.lat,
@@ -177,7 +183,11 @@ async function getDirections(origin, destination) {
     }
   }
 
-  return steps;
+  return {
+    steps,
+    distanceKm: distanceMeters > 0 ? distanceMeters / 1000 : null,
+    durationSec: durationSec > 0 ? durationSec : null,
+  };
 }
 
 export const GoogleMapsProvider = {

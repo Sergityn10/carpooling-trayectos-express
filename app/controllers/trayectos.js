@@ -370,22 +370,52 @@ async function crearTrayecto(req, res) {
 
   let precioConductor = 0;
 
+  // Calcular ruta real (Directions API) para obtener distancia y tramos
+  let routeSteps = [];
+  let routeDistanceKm = null;
+  try {
+    const originCoord = `${originDetails.lat},${originDetails.lng}`;
+    const destCoord = `${destinationDetails.lat},${destinationDetails.lng}`;
+    const route = await GoogleMapsProvider.getDirections(
+      originCoord,
+      destCoord,
+      routeIndex,
+    );
+    routeSteps = route.steps;
+    routeDistanceKm = route.distanceKm;
+    console.log(
+      "[crearTrayecto] Ruta Directions:",
+      routeSteps.length,
+      "tramos | distancia real:",
+      routeDistanceKm != null ? `${routeDistanceKm.toFixed(2)} km` : "N/A",
+    );
+  } catch (e) {
+    console.error(
+      "[crearTrayecto] Error al obtener ruta de Directions:",
+      e?.message ?? e,
+    );
+  }
+
   if (precio === 0) {
     console.log(
       "[crearTrayecto] Precio establecido a 0 por el conductor, saltando verificación",
     );
   } else {
     try {
-      const distanceKm = haversineKm(
-        originDetails.lat,
-        originDetails.lng,
-        destinationDetails.lat,
-        destinationDetails.lng,
-      );
+      // Usar distancia real de Directions; fallback a haversine si no disponible
+      const distanceKm =
+        routeDistanceKm ??
+        haversineKm(
+          originDetails.lat,
+          originDetails.lng,
+          destinationDetails.lat,
+          destinationDetails.lng,
+        );
       console.log(
-        "[crearTrayecto] Distancia haversine:",
+        "[crearTrayecto] Distancia usada para pricing:",
         distanceKm.toFixed(2),
         "km",
+        routeDistanceKm != null ? "(Directions)" : "(haversine fallback)",
       );
 
       const eurPerKm = Math.min(
@@ -513,12 +543,11 @@ async function crearTrayecto(req, res) {
       .send({ status: "Error", message: "Error al crear el trayecto" });
   }
 
-  // Generar tramos (pasos de la ruta) asíncronamente
+  // Guardar tramos (pasos de la ruta) — ya calculados arriba
   try {
-    const steps = await GoogleMapsProvider.getDirections(origen, destino);
-    if (steps.length > 0) {
+    if (routeSteps.length > 0) {
       await prisma.tramo.createMany({
-        data: steps.map((step, index) => ({
+        data: routeSteps.map((step, index) => ({
           id: randomUUID(),
           id_trayecto: trayectoId,
           lat: step.lat,
@@ -528,7 +557,7 @@ async function crearTrayecto(req, res) {
         })),
       });
       console.log(
-        `[crearTrayecto] ${steps.length} tramos guardados para trayecto ${trayectoId}`,
+        `[crearTrayecto] ${routeSteps.length} tramos guardados para trayecto ${trayectoId}`,
       );
     }
   } catch (e) {
@@ -1448,7 +1477,25 @@ async function patchTrayecto(req, res) {
     const lng2 = updateData.destino_lng ?? original.destino_lng;
 
     if (lat1 != null && lng1 != null && lat2 != null && lng2 != null) {
-      const distanceKm = haversineKm(lat1, lng1, lat2, lng2);
+      // Usar distancia real de Directions; fallback a haversine
+      let distanceKm = null;
+      try {
+        const route = await GoogleMapsProvider.getDirections(
+          `${lat1},${lng1}`,
+          `${lat2},${lng2}`,
+          routeIndex,
+        );
+        distanceKm = route.distanceKm;
+      } catch (e) {
+        console.error(
+          "[updateTrayecto] Error obteniendo ruta de Directions:",
+          e?.message ?? e,
+        );
+      }
+      if (distanceKm == null) {
+        distanceKm = haversineKm(lat1, lng1, lat2, lng2);
+      }
+
       const precioMinEsperado =
         Math.round(distanceKm * EUR_PER_KM_MIN * 100) / 100;
       const precioMaxEsperado =
