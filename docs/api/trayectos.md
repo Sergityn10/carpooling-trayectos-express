@@ -16,7 +16,7 @@ Endpoints para gestionar trayectos (viajes compartidos).
 | `disponible`  | Int      | Plazas disponibles                             |
 | `precio`      | Float    | Precio por plaza (€)                           |
 | `conductor`   | UUID     | ID del conductor                               |
-| `vehiculo_id` | UUID     | **Obligatorio.** ID del vehículo del conductor |
+| `vehiculo_id` | UUID     | **Opcional.** ID del vehículo del conductor    |
 | `routeIndex`  | Int      | Índice de ruta (default 0)                     |
 | `status`      | String   | `programado`, `en curso`, `finalizado`         |
 | `origen_lat`  | Float    | Latitud del origen (auto)                      |
@@ -338,7 +338,7 @@ POST /api/trayecto
 }
 ```
 
-**Campos obligatorios:** `origen`, `destino`, `fecha`, `hora`, `plazas`, `precio`, `conductor`, `vehiculo_id`
+**Campos obligatorios:** `origen`, `destino`, `fecha`, `hora`, `plazas`, `precio`, `conductor` (`vehiculo_id` es opcional)
 
 **Notas:**
 - Si `conductor` no se envía, se usa el ID del usuario autenticado.
@@ -485,7 +485,7 @@ PATCH /api/trayecto/:id
 
 **Auth:** No requerida (verificar en producción)
 
-**Body:** Todos los campos del schema (validación completa `validateTrayectoSinId`), incluyendo `vehiculo_id` obligatorio.
+**Body:** Todos los campos del schema (validación completa `validateTrayectoSinId`). `vehiculo_id` es opcional.
 
 **Notas:**
 - Recalcula coordenadas si cambia `origen` o `destino`.

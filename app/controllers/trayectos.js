@@ -498,7 +498,7 @@ async function crearTrayecto(req, res) {
         hora: fechaHoraSQL,
         plazas,
         conductor,
-        vehiculo_id,
+        vehiculo_id: vehiculo_id || null,
         disponible,
         precio,
         precio_conductor: precioConductor,
@@ -579,7 +579,7 @@ async function crearTrayecto(req, res) {
     plazas,
     conductor: conductorName,
     conductor_id,
-    vehiculo_id,
+    vehiculo_id: vehiculo_id || null,
     precio_conductor: precioConductor,
     precio,
   };
@@ -1388,7 +1388,11 @@ async function actualizarTrayecto(req, res) {
 
   // Map remaining fields to Prisma update data
   for (const key in data) {
-    updateData[key] = data[key];
+    if (key === "vehiculo_id") {
+      updateData[key] = data[key] || null;
+    } else {
+      updateData[key] = data[key];
+    }
   }
 
   try {
@@ -1464,7 +1468,7 @@ async function patchTrayecto(req, res) {
   updateData.hora = fechaHora;
   updateData.plazas = plazas;
   updateData.conductor = conductor;
-  updateData.vehiculo_id = vehiculo_id;
+  updateData.vehiculo_id = vehiculo_id || null;
   updateData.routeIndex = routeIndex;
 
   if (precio === 0) {
@@ -2666,7 +2670,11 @@ async function adminUpdateTrayecto(req, res) {
     const updateData = {};
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) {
-        updateData[field] = req.body[field];
+        if (field === "vehiculo_id") {
+          updateData[field] = req.body[field] || null;
+        } else {
+          updateData[field] = req.body[field];
+        }
       }
     }
 

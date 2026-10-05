@@ -16,7 +16,7 @@ model Trayecto {
   precio        Float
   precio_conductor Float  @default(0)
   conductor     String   @db.VarChar(36)
-  vehiculo_id   String   @db.VarChar(36)
+  vehiculo_id   String?  @db.VarChar(36)
   routeIndex    Int?     @default(0)
   status        String   @default("programado") @db.VarChar(20)
   origen_lat    Float?

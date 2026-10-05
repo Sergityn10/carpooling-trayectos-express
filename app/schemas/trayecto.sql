@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS trayectos (
     disponible INT NOT NULL,
     precio DECIMAL(10, 2) NOT NULL, -- DECIMAL es más preciso para dinero que REAL
     conductor INT NOT NULL,
+    vehiculo_id VARCHAR(36) NULL,
     routeIndex INT NULL DEFAULT 0,
     status ENUM('en curso', 'programado', 'finalizado', 'cancelado') NOT NULL DEFAULT 'programado',
     origen_lat DECIMAL(10, 8) NULL,
