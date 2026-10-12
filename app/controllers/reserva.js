@@ -643,10 +643,14 @@ async function deleteReserva(req, res) {
       .status(404)
       .send({ status: "Error", message: "Reserva no encontrada" });
   }
-  //Comprobar que el usuario que la elimina es el que ha generado la reserva
-  if (String(reserva.user_id) !== String(req.user?.userId)) {
-    console.log(reserva.user_id, req.user?.userId);
-    return res.status(401).send({
+  const authUserId = req.user?.userId ?? req.user?.id;
+  const userRole = req.user?.role;
+  const isPassenger = String(reserva.user_id) === String(authUserId);
+  const isDriver = String(reserva.Trayecto?.conductor) === String(authUserId);
+  const isAdmin = userRole === "admin";
+
+  if (!isPassenger && !isDriver && !isAdmin) {
+    return res.status(403).send({
       status: "Error",
       message: "No tienes permiso para eliminar esta reserva",
     });
@@ -1720,23 +1724,37 @@ async function getPublicProfile(req, res) {
       },
     });
 
-    const caeRows = await prisma.$queryRawUnsafe(
-      `SELECT
-         COALESCE(SUM(ic.km_recorridos), 0) AS km_recorridos,
-         COALESCE(SUM(ic.kwh_generated), 0) AS kwh_generated,
-         COALESCE(SUM(ic.eur_generated), 0) AS eur_generated
-       FROM info_caes ic
-       INNER JOIN trayectos t ON t.id = ic.id_trayecto
-       WHERE t.conductor = ?`,
-      userStr,
-    );
+    const authUserId = req.user?.userId ?? req.user?.id;
+    const isOwnerOrAdmin =
+      (authUserId && String(authUserId) === userStr) ||
+      req.user?.role === "admin";
 
-    const kmRecorridos =
-      caeRows && caeRows[0] ? Number(caeRows[0].km_recorridos) : 0;
-    const kwhGenerados =
-      caeRows && caeRows[0] ? Number(caeRows[0].kwh_generated) : 0;
-    const eurGenerados =
-      caeRows && caeRows[0] ? Number(caeRows[0].eur_generated) : 0;
+    let caeData = null;
+    if (isOwnerOrAdmin) {
+      const caeRows = await prisma.$queryRawUnsafe(
+        `SELECT
+           COALESCE(SUM(ic.km_recorridos), 0) AS km_recorridos,
+           COALESCE(SUM(ic.kwh_generated), 0) AS kwh_generated,
+           COALESCE(SUM(ic.eur_generated), 0) AS eur_generated
+         FROM info_caes ic
+         INNER JOIN trayectos t ON t.id = ic.id_trayecto
+         WHERE t.conductor = ?`,
+        userStr,
+      );
+
+      const kmRecorridos =
+        caeRows && caeRows[0] ? Number(caeRows[0].km_recorridos) : 0;
+      const kwhGenerados =
+        caeRows && caeRows[0] ? Number(caeRows[0].kwh_generated) : 0;
+      const eurGenerados =
+        caeRows && caeRows[0] ? Number(caeRows[0].eur_generated) : 0;
+
+      caeData = {
+        km_recorridos: Math.round(kmRecorridos * 100) / 100,
+        kwh_generados: Math.round(kwhGenerados * 100) / 100,
+        eur_generados: Math.round(eurGenerados * 100) / 100,
+      };
+    }
 
     return res.status(200).send({
       status: "Success",
@@ -1753,11 +1771,7 @@ async function getPublicProfile(req, res) {
           rating_promedio: ratingPromedio,
         },
         pasajeros_transportados: pasajerosTransportados,
-        cae: {
-          km_recorridos: Math.round(kmRecorridos * 100) / 100,
-          kwh_generados: Math.round(kwhGenerados * 100) / 100,
-          eur_generados: Math.round(eurGenerados * 100) / 100,
-        },
+        ...(isOwnerOrAdmin && caeData ? { cae: caeData } : {}),
       },
     });
   } catch (error) {

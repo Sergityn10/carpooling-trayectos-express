@@ -1,6 +1,24 @@
 import z from "zod";
 const horaRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
 
+export const viewportQuerySchema = z.object({
+  minLat: z.coerce.number().min(-90).max(90),
+  minLng: z.coerce.number().min(-180).max(180),
+  maxLat: z.coerce.number().min(-90).max(90),
+  maxLng: z.coerce.number().min(-180).max(180),
+  zoom: z.coerce.number().int().min(1).max(22).default(12),
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  plazas: z.coerce.number().int().min(1).max(8).default(1),
+  precision: z.enum(["full", "simplified", "bounds"]).default("simplified"),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+}).refine(data => data.minLat <= data.maxLat, {
+  message: "minLat no puede ser mayor que maxLat",
+  path: ["minLat"],
+}).refine(data => data.minLng <= data.maxLng, {
+  message: "minLng no puede ser mayor que maxLng",
+  path: ["minLng"],
+});
+
 const trayectSchema = z.object({
   id: z.string().uuid(),
   origen: z.string().min(2).max(100),
@@ -40,4 +58,5 @@ export const TrayectosSchema = {
   validateTrayecto,
   validateTrayectoSinId,
   validateTrayectoPartial,
+  viewportQuerySchema,
 };

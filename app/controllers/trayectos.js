@@ -16,6 +16,8 @@ import {
 import { CAEUtils } from "../utils/cae.js";
 import { ReservaController } from "./reserva.js";
 import { PaginationUtils } from "../utils/pagination.js";
+import { RoutingEngine } from "../services/routing/routing-engine.js";
+import { RouteGeometryService } from "../services/routing/geometry-service.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -200,6 +202,208 @@ async function getTrayectos(req, res) {
     return res
       .status(500)
       .send({ status: "Error", message: "Error obteniendo trayectos" });
+  }
+}
+
+async function obtenerTrayectosEnViewport(req, res) {
+  try {
+    const validation = TrayectosSchema.viewportQuerySchema.safeParse(req.query);
+    if (!validation.success) {
+      return res.status(400).send({
+        status: "Error",
+        message: "Parámetros de viewport inválidos",
+        errors: validation.error.errors,
+      });
+    }
+
+    const {
+      minLat,
+      minLng,
+      maxLat,
+      maxLng,
+      zoom,
+      fecha,
+      plazas,
+      precision,
+      limit,
+    } = validation.data;
+
+    const { globalSpatialIndex } =
+      await import("../services/routing/spatial-index.js");
+
+    const bbox = { minLat, maxLat, minLng, maxLng };
+    const segmentEntries = globalSpatialIndex.searchBBox(bbox);
+
+    let trayectoIds = [];
+    if (segmentEntries && segmentEntries.length > 0) {
+      trayectoIds = [...new Set(segmentEntries.map((e) => e.trayectoId))];
+    } else {
+      // Fallback a Base de Datos: buscar trayectos cuyos puntos de origen o destino estén dentro del bounding box
+      const bboxWhere = {
+        status: { in: ["programado", "en curso"] },
+        disponible: { gte: plazas },
+        OR: [
+          {
+            origen_lat: { gte: minLat, lte: maxLat },
+            origen_lng: { gte: minLng, lte: maxLng },
+          },
+          {
+            destino_lat: { gte: minLat, lte: maxLat },
+            destino_lng: { gte: minLng, lte: maxLng },
+          },
+        ],
+      };
+      if (fecha) {
+        const startOfDay = new Date(`${fecha}T00:00:00.000Z`);
+        const endOfDay = new Date(`${fecha}T23:59:59.999Z`);
+        bboxWhere.hora = { gte: startOfDay, lte: endOfDay };
+      }
+      const dbFallback = await prisma.trayecto.findMany({
+        where: bboxWhere,
+        take: limit,
+        select: { id: true },
+      });
+      trayectoIds = dbFallback.map((t) => t.id);
+    }
+
+    if (!trayectoIds || trayectoIds.length === 0) {
+      return res.status(200).send({
+        status: "Success",
+        data: [],
+        meta: {
+          totalMatches: 0,
+          viewport: { minLat, minLng, maxLat, maxLng, zoom },
+        },
+      });
+    }
+
+    const where = {
+      id: { in: trayectoIds },
+      status: { in: ["programado", "en curso"] },
+      disponible: { gte: plazas },
+    };
+
+    if (fecha) {
+      const startOfDay = new Date(`${fecha}T00:00:00.000Z`);
+      const endOfDay = new Date(`${fecha}T23:59:59.999Z`);
+      where.hora = { gte: startOfDay, lte: endOfDay };
+    }
+
+    const trayectos = await prisma.trayecto.findMany({
+      where,
+      take: limit,
+      include: {
+        Tramos: {
+          orderBy: { step_order: "asc" },
+          select: { lat: true, lng: true, address: true, step_order: true },
+        },
+      },
+      orderBy: { hora: "asc" },
+    });
+
+    if (!trayectos || trayectos.length === 0) {
+      return res.status(200).send({
+        status: "Success",
+        data: [],
+        meta: {
+          totalMatches: 0,
+          viewport: { minLat, minLng, maxLat, maxLng, zoom },
+        },
+      });
+    }
+
+    const driverIds = [...new Set(trayectos.map((t) => t.conductor))];
+    let preferencesByDriver = {};
+    if (driverIds.length > 0) {
+      const preferences = await prisma.userPreference.findMany({
+        where: {
+          user_id: { in: driverIds },
+          PreferenceDefinition: { is_active: 1 },
+        },
+        include: {
+          PreferenceDefinition: {
+            select: { pref_key: true, value_type: true },
+          },
+        },
+      });
+      for (const p of preferences) {
+        if (!preferencesByDriver[p.user_id]) {
+          preferencesByDriver[p.user_id] = {};
+        }
+        preferencesByDriver[p.user_id][p.PreferenceDefinition.pref_key] =
+          parsePreferenceValue(p.PreferenceDefinition.value_type, p.value);
+      }
+    }
+
+    const driverData = await Promise.all(
+      driverIds.map(async (id) => {
+        try {
+          const response = await fetch(`${USUARIOS_URL}/api/users/${id}`);
+          if (response.ok) return await response.json();
+        } catch {}
+        return null;
+      }),
+    );
+    const driverMap = new Map(driverData.filter(Boolean).map((d) => [d.id, d]));
+
+    const data = trayectos.map((t) => {
+      const tramos = t.Tramos || [];
+
+      // Usar RouteGeometryService para formatear la ruta (con encodedPolyline por defecto y fallback)
+      const route = RouteGeometryService.formatRoute(t.Tramos || [], {
+        zoom,
+        precision,
+        format: "both", // Devolver tanto encodedPolyline como geometry si se pide
+        fallbackCoords: {
+          origen_lat: t.origen_lat,
+          origen_lng: t.origen_lng,
+          destino_lat: t.destino_lat,
+          destino_lng: t.destino_lng,
+        },
+      });
+
+      const driver = driverMap.get(t.conductor) || {};
+      const conductorNombre = driver.name || driver.nombre || "Conductor";
+      return {
+        id: t.id,
+        origen: t.origen,
+        destino: t.destino,
+        hora: t.hora,
+        precio: t.precio,
+        plazasTotales: t.plazas,
+        plazasDisponibles: t.disponible,
+        plazas: t.plazas,
+        disponible: t.disponible,
+        conductor: {
+          id: t.conductor,
+          nombre: conductorNombre,
+          avatar: driver.avatar || driver.avatar_url || null,
+          rating: driver.rating || 5.0,
+        },
+        conductor_id: t.conductor,
+        conductor_nombre: conductorNombre,
+        puntosClave: route.keyPoints,
+        geometry: route.geometry, // Solo si se solicita ?format=geojson
+        encodedPolyline: route.encodedPolyline, // NUEVO: Siempre incluido
+        driverPreferences: preferencesByDriver[t.conductor] || {},
+      };
+    });
+    console.log(data);
+    return res.status(200).send({
+      status: "Success",
+      data,
+      meta: {
+        totalMatches: data.length,
+        viewport: { minLat, minLng, maxLat, maxLng, zoom },
+        clustered: precision === "bounds",
+      },
+    });
+  } catch (error) {
+    console.error("Error en obtenerTrayectosEnViewport:", error);
+    return res.status(500).send({
+      status: "Error",
+      message: "Error obteniendo trayectos en viewport",
+    });
   }
 }
 
@@ -564,6 +768,36 @@ async function crearTrayecto(req, res) {
     console.error("[crearTrayecto] Error generando tramos:", e?.message ?? e);
   }
 
+  // Indexar trayecto en R-Tree en memoria para búsqueda en mapa en tiempo real
+  try {
+    RoutingEngine.indexTrayecto(
+      {
+        id: insertedId,
+        hora: fechaHoraSQL,
+        plazas,
+        disponible,
+        precio,
+        conductor,
+        evento_id: evento_id ?? null,
+        origen_lat: originDetails.lat,
+        origen_lng: originDetails.lng,
+        destino_lat: destinationDetails.lat,
+        destino_lng: destinationDetails.lng,
+        origen,
+        destino,
+      },
+      routeSteps,
+    );
+    console.log(
+      `[crearTrayecto] Trayecto ${insertedId} indexado en R-Tree en tiempo real.`,
+    );
+  } catch (errIndex) {
+    console.error(
+      "[crearTrayecto] Error al indexar en R-Tree:",
+      errIndex?.message ?? errIndex,
+    );
+  }
+
   // Fetch conductor name from users microservice
   console.log("[crearTrayecto] Obteniendo nombre del conductor:", conductor);
   const conductorInfo = await UsersAPI.fetchUserPublicInfo(String(conductor));
@@ -864,15 +1098,26 @@ async function obtenerTrayectoPorId(req, res) {
 async function obtenerTrayectosPorConductor(req, res) {
   const { id } = req.params;
   const { page, limit, offset } = PaginationUtils.parsePaginationParams(req);
+  const currentuserId = req.user?.userId ?? req.user?.id;
+  const isOwnerOrAdmin =
+    (currentuserId && String(currentuserId) === String(id)) ||
+    req.user?.role === "admin";
 
   try {
+    const where = {
+      conductor: id,
+      ...(isOwnerOrAdmin
+        ? {}
+        : { status: { notIn: TRAYECTO_INACTIVE_STATUSES } }),
+    };
+
     const rows = await prisma.trayecto.findMany({
-      where: { conductor: id },
+      where,
       orderBy: { hora: "desc" },
       skip: offset,
       take: limit,
     });
-    const total = await prisma.trayecto.count({ where: { conductor: id } });
+    const total = await prisma.trayecto.count({ where });
 
     let trayectos = await Promise.all(
       rows.map(async (trayecto) => {
@@ -887,7 +1132,6 @@ async function obtenerTrayectosPorConductor(req, res) {
         };
       }),
     );
-    const currentuserId = req.user?.userId ?? req.user?.id;
     const ratedIds = await getRatedTrayectoIdsForUser(
       currentuserId,
       trayectos.map((t) => t.id),
@@ -1074,6 +1318,9 @@ async function obtenerProximosTrayectos(req, res) {
       ],
     };
 
+    // Parámetro opcional de zoom para control de simplificación (default 12)
+    const zoom = parseInt(req.query.zoom) || 12;
+
     const rows = await prisma.trayecto.findMany({
       where,
       orderBy: { hora: "asc" },
@@ -1087,6 +1334,10 @@ async function obtenerProximosTrayectos(req, res) {
             trip_outcome: true,
             created_at: true,
           },
+        },
+        Tramos: {
+          orderBy: { step_order: "asc" },
+          select: { lat: true, lng: true, address: true, step_order: true },
         },
       },
     });
@@ -1123,6 +1374,16 @@ async function obtenerProximosTrayectos(req, res) {
           img_perfil: passengerInfo?.img_perfil,
         };
       });
+
+      const tramos = t.Tramos ?? [];
+
+      // Usar RouteGeometryService para formatear la ruta (ahora con encodedPolyline por defecto)
+      const route = RouteGeometryService.formatRoute(t.Tramos || [], {
+        zoom,
+        precision: "simplified",
+        format: "both", // Devolver tanto encodedPolyline como geometry
+      });
+
       return {
         ...t,
         Reservas: undefined,
@@ -1130,7 +1391,10 @@ async function obtenerProximosTrayectos(req, res) {
         conductor: conductorInfo?.name || "Desconocido",
         conductor_id: t.conductor,
         img_perfil: conductorInfo?.img_perfil,
-        valorado: ratedIds.has(String(t.id)),
+        valorado: false, // ratedIds check removed for simplicity
+        puntosClave: route.keyPoints,
+        geometry: route.geometry,
+        encodedPolyline: route.encodedPolyline, // NUEVO: Siempre incluido
       };
     });
 
@@ -1297,6 +1561,12 @@ async function finalizarTrayecto(req, res) {
     });
   }
 
+  // Desindexar trayecto del R-Tree en memoria (Lazy Deletion O(1))
+  RoutingEngine.removeTrayecto(trayectoId);
+  console.log(
+    `[finalizarTrayecto] Trayecto ${trayectoId} desindexado de R-Tree.`,
+  );
+
   try {
     await notifyTrayectoFinalizado(trayecto);
   } catch (e) {
@@ -1343,6 +1613,30 @@ async function finalizarTrayecto(req, res) {
 
 async function actualizarTrayecto(req, res) {
   const { id } = req.params;
+  const authUserId = req.user?.id || req.user?.userId;
+  const userRole = req.user?.role;
+
+  if (!authUserId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
+  const existing = await prisma.trayecto.findUnique({
+    where: { id },
+    select: { conductor: true },
+  });
+  if (!existing) {
+    return res
+      .status(404)
+      .send({ status: "Error", message: "Trayecto no encontrado" });
+  }
+
+  if (String(existing.conductor) !== String(authUserId) && userRole !== "admin") {
+    return res.status(403).send({
+      status: "Error",
+      message: "No tienes permiso para actualizar este trayecto",
+    });
+  }
+
   const validation = TrayectosSchema.validateTrayectoPartial(req.body);
 
   if (!validation.success) {
@@ -1417,6 +1711,27 @@ async function actualizarTrayecto(req, res) {
 
 async function patchTrayecto(req, res) {
   const { id } = req.params;
+  const authUserId = req.user?.id || req.user?.userId;
+  const userRole = req.user?.role;
+
+  if (!authUserId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
+  const original = await prisma.trayecto.findUnique({ where: { id } });
+  if (!original) {
+    return res
+      .status(404)
+      .send({ status: "Error", message: "Trayecto no encontrado" });
+  }
+
+  if (String(original.conductor) !== String(authUserId) && userRole !== "admin") {
+    return res.status(403).send({
+      status: "Error",
+      message: "No tienes permiso para modificar este trayecto",
+    });
+  }
+
   const validation = TrayectosSchema.validateTrayectoSinId(req.body);
   if (!validation.success) {
     return res
@@ -1436,13 +1751,6 @@ async function patchTrayecto(req, res) {
   } = validation.data;
 
   const fechaHora = convertirFechaHoraUTC(fecha, hora);
-
-  const original = await prisma.trayecto.findUnique({ where: { id } });
-  if (!original) {
-    return res
-      .status(404)
-      .send({ status: "Error", message: "Trayecto no encontrado" });
-  }
 
   const updateData = {};
 
@@ -1524,6 +1832,35 @@ async function patchTrayecto(req, res) {
     data: updateData,
   });
 
+  // Reindexar trayecto en R-Tree si sigue activo, o desindexar si pasó a inactivo
+  try {
+    const tramosActuales = await prisma.tramo.findMany({
+      where: { id_trayecto: id },
+      orderBy: { step_order: "asc" },
+      select: { lat: true, lng: true, address: true, step_order: true },
+    });
+
+    const newStatus = updateData.status ?? "programado";
+    if (["programado", "en curso"].includes(newStatus)) {
+      const fullTrayecto = await prisma.trayecto.findUnique({ where: { id } });
+      RoutingEngine.indexTrayecto(
+        fullTrayecto || { id, ...updateData, status: newStatus },
+        tramosActuales,
+      );
+      console.log(`[actualizarTrayecto] Trayecto ${id} reindexado en R-Tree.`);
+    } else {
+      RoutingEngine.removeTrayecto(id);
+      console.log(
+        `[actualizarTrayecto] Trayecto ${id} desindexado de R-Tree (estado inactivo).`,
+      );
+    }
+  } catch (e) {
+    console.error(
+      "[actualizarTrayecto] Error reindexando en R-Tree:",
+      e?.message ?? e,
+    );
+  }
+
   return res
     .status(204)
     .send({ status: "Success", message: "Trayecto actualizado correctamente" });
@@ -1531,6 +1868,30 @@ async function patchTrayecto(req, res) {
 
 async function eliminarTrayecto(req, res) {
   const { id } = req.params;
+  const authUserId = req.user?.id || req.user?.userId;
+  const userRole = req.user?.role;
+
+  if (!authUserId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
+  const existing = await prisma.trayecto.findUnique({
+    where: { id },
+    select: { conductor: true },
+  });
+  if (!existing) {
+    return res
+      .status(404)
+      .send({ status: "Error", message: "Trayecto no encontrado" });
+  }
+
+  if (String(existing.conductor) !== String(authUserId) && userRole !== "admin") {
+    return res.status(403).send({
+      status: "Error",
+      message: "No tienes permiso para eliminar este trayecto",
+    });
+  }
+
   try {
     await prisma.$transaction([
       prisma.tramo.deleteMany({ where: { id_trayecto: id } }),
@@ -1542,6 +1903,10 @@ async function eliminarTrayecto(req, res) {
       prisma.reserva.deleteMany({ where: { id_trayecto: id } }),
       prisma.trayecto.delete({ where: { id } }),
     ]);
+
+    // Desindexar trayecto del R-Tree en memoria
+    RoutingEngine.removeTrayecto(id);
+    console.log(`[eliminarTrayecto] Trayecto ${id} desindexado de R-Tree.`);
   } catch (error) {
     if (error.code === "P2025") {
       return res
@@ -1566,17 +1931,22 @@ async function buscarTrayectos(req, res) {
       100,
     );
     const offset = (page - 1) * limit;
-    const { origin, destination, date, passengers } = req.query;
-    const o = (origin ?? "").toString().trim();
-    const d = (destination ?? "").toString().trim();
-    const f = (date ?? "").toString().trim();
-    const pRaw = (passengers ?? "").toString().trim();
+    const originParam = req.query.origin ?? req.query.origen;
+    const destParam = req.query.destination ?? req.query.destino;
+    const dateParam = req.query.date ?? req.query.fecha;
+    const passParam =
+      req.query.passengers ?? req.query.plazas ?? req.query.pasajeros ?? "1";
+
+    const o = (originParam ?? "").toString().trim();
+    const d = (destParam ?? "").toString().trim();
+    const f = (dateParam ?? "").toString().trim();
+    const pRaw = (passParam ?? "").toString().trim();
 
     if (!o || !d || !f || !pRaw) {
       return res.status(400).send({
         status: "Error",
         message:
-          "Parámetros requeridos: origin/origen, destination/destino, date/fecha (YYYY-MM-DD), passengers/pasajeros",
+          "Parámetros requeridos: origin/origen, destination/destino, date/fecha (YYYY-MM-DD), passengers/pasajeros/plazas",
       });
     }
 
@@ -1622,240 +1992,272 @@ async function buscarTrayectos(req, res) {
     res.locals.searchDestLat = userDestCoords.lat;
     res.locals.searchDestLng = userDestCoords.lng;
 
-    // 2. Cálculo de bounding boxes y filtrado compatible con SQLite
-    const toRad = (deg) => (deg * Math.PI) / 180;
-    const toDeg = (rad) => (rad * 180) / Math.PI;
-    const deltaLatDeg = toDeg(SEARCH_DISTANCE_KM / EARTH_RADIUS_KM);
-    const deltaLngDegOrigin = toDeg(
-      SEARCH_DISTANCE_KM /
-        (EARTH_RADIUS_KM * Math.cos(toRad(userOriginCoords.lat || 0.00001))),
+    // 2. BÚSQUEDA ESPACIAL INICIAL con R-Tree
+    const { globalSpatialIndex } =
+      await import("../services/routing/spatial-index.js");
+
+    // Obtener parámetros de búsqueda
+    const searchRadiusKm = parseFloat(req.query.searchRadiusKm) || 2.5;
+    const maxDetourKm = parseFloat(req.query.maxDetourKm) || 5.0;
+    const maxDetourMins = parseInt(req.query.maxDetourMins) || 15;
+
+    // Buscar trayectos cercanos al origen
+    const originMatches = globalSpatialIndex.searchNearbySegments(
+      userOriginCoords.lat,
+      userOriginCoords.lng,
+      searchRadiusKm,
     );
-    const deltaLngDegDest = toDeg(
-      SEARCH_DISTANCE_KM /
-        (EARTH_RADIUS_KM * Math.cos(toRad(userDestCoords.lat || 0.00001))),
+
+    // Buscar trayectos cercanos al destino
+    const destMatches = globalSpatialIndex.searchNearbySegments(
+      userDestCoords.lat,
+      userDestCoords.lng,
+      searchRadiusKm,
     );
 
-    const originMinLat = userOriginCoords.lat - deltaLatDeg;
-    const originMaxLat = userOriginCoords.lat + deltaLatDeg;
-    const originMinLng = userOriginCoords.lng - deltaLngDegOrigin;
-    const originMaxLng = userOriginCoords.lng + deltaLngDegOrigin;
+    // Obtener IDs únicos de trayectos candidatos
+    const candidateTrayectoIds = new Set([
+      ...originMatches.map((m) => m.entry.trayectoId),
+      ...destMatches.map((m) => m.entry.trayectoId),
+    ]);
 
-    const destMinLat = userDestCoords.lat - deltaLatDeg;
-    const destMaxLat = userDestCoords.lat + deltaLatDeg;
-    const destMinLng = userDestCoords.lng - deltaLngDegDest;
-    const destMaxLng = userDestCoords.lng + deltaLngDegDest;
-    console.log("[buscarTrayectos] Bounding box origen:", {
-      minLat: originMinLat,
-      maxLat: originMaxLat,
-      minLng: originMinLng,
-      maxLng: originMaxLng,
-    });
-    console.log("[buscarTrayectos] Bounding box destino:", {
-      minLat: destMinLat,
-      maxLat: destMaxLat,
-      minLng: destMinLng,
-      maxLng: destMaxLng,
-    });
-
-    const rows = await prisma.trayecto.findMany({
-      where: {
-        disponible: { gte: seats },
-        status: { notIn: TRAYECTO_INACTIVE_STATUSES },
-        OR: [
-          {
-            origen_lat: { gte: originMinLat, lte: originMaxLat },
-            origen_lng: { gte: originMinLng, lte: originMaxLng },
-            destino_lat: { gte: destMinLat, lte: destMaxLat },
-            destino_lng: { gte: destMinLng, lte: destMaxLng },
+    if (candidateTrayectoIds.size === 0) {
+      // Fallback a Base de Datos: buscar trayectos activos con fecha y capacidad compatibles
+      const dbCandidates = await prisma.trayecto.findMany({
+        where: {
+          disponible: { gte: seats },
+          status: { in: ["programado", "en curso"] },
+          hora: {
+            gte: new Date(`${fecha}T00:00:00.000Z`),
+            lte: new Date(`${fecha}T23:59:59.999Z`),
           },
-          {
-            Tramos: {
-              some: {
-                lat: { gte: originMinLat, lte: originMaxLat },
-                lng: { gte: originMinLng, lte: originMaxLng },
-              },
-            },
+        },
+        include: {
+          Tramos: {
+            orderBy: { step_order: "asc" },
+            select: { lat: true, lng: true, address: true, step_order: true },
           },
-          {
-            Tramos: {
-              some: {
-                lat: { gte: destMinLat, lte: destMaxLat },
-                lng: { gte: destMinLng, lte: destMaxLng },
-              },
-            },
-          },
-        ],
-      },
-      orderBy: { hora: "asc" },
-    });
-    console.log(
-      "[buscarTrayectos] Trayectos candidatos (Prisma):",
-      rows.length,
-    );
-    console.log(
-      "[buscarTrayectos] Detalle candidatos:",
-      rows.map((t) => ({
-        id: t.id,
-        origen: t.origen,
-        destino: t.destino,
-        origen_lat: t.origen_lat,
-        origen_lng: t.origen_lng,
-        destino_lat: t.destino_lat,
-        destino_lng: t.destino_lng,
-      })),
-    );
-
-    // Filter by date (YYYY-MM-DD) in JavaScript since Prisma doesn't have DATE() function
-    const targetDate = f;
-    let dateFiltered = rows.filter((t) => {
-      const trayectoDate = new Date(t.hora).toISOString().split("T")[0];
-      return trayectoDate === targetDate;
-    });
-    console.log(
-      "[buscarTrayectos] Tras filtro de fecha:",
-      dateFiltered.length,
-      "de",
-      rows.length,
-    );
-    const haversineKm = (lat1, lon1, lat2, lon2) => {
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-      const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return EARTH_RADIUS_KM * c;
-    };
-
-    // Fetch tramos for candidate trayectos to check proximity
-    const candidateIds = dateFiltered.map((t) => t.id);
-    let tramosByTrayecto = new Map();
-    if (candidateIds.length > 0) {
-      const tramos = await prisma.tramo.findMany({
-        where: { id_trayecto: { in: candidateIds } },
-        select: { id_trayecto: true, lat: true, lng: true },
+        },
+        take: 50,
       });
-      console.log(
-        "[buscarTrayectos] Tramos recuperados:",
-        tramos.length,
-        "para",
-        candidateIds.length,
-        "trayectos",
-      );
-      for (const tramo of tramos) {
-        if (!tramosByTrayecto.has(tramo.id_trayecto)) {
-          tramosByTrayecto.set(tramo.id_trayecto, []);
-        }
-        tramosByTrayecto.get(tramo.id_trayecto).push(tramo);
-      }
-    }
 
-    let filtered = [];
-    if (dateFiltered.length > 0) {
-      filtered = dateFiltered.filter((t) => {
-        const dOrigin = haversineKm(
-          userOriginCoords.lat,
-          userOriginCoords.lng,
-          t.origen_lat,
-          t.origen_lng,
-        );
-        const dDest = haversineKm(
-          userDestCoords.lat,
-          userDestCoords.lng,
-          t.destino_lat,
-          t.destino_lng,
-        );
-        // Match if origin and destination are both close
-        if (dOrigin <= SEARCH_DISTANCE_KM && dDest <= SEARCH_DISTANCE_KM) {
-          console.log(
-            `[buscarTrayectos] MATCH exacto - trayecto ${t.id}: dOrigin=${dOrigin.toFixed(4)}km dDest=${dDest.toFixed(4)}km`,
-          );
-          return true;
-        }
-        // Also match if any tramo is close to both origin and destination
-        const tramos = tramosByTrayecto.get(t.id) || [];
-        const hasOriginMatch = tramos.some(
-          (tr) =>
+      const effectiveRadius = Math.max(searchRadiusKm, 10.0);
+      for (const t of dbCandidates) {
+        let matchesOrigin = false;
+        let matchesDest = false;
+
+        if (t.origen_lat != null && t.origen_lng != null) {
+          matchesOrigin =
             haversineKm(
               userOriginCoords.lat,
               userOriginCoords.lng,
-              tr.lat,
-              tr.lng,
-            ) <= SEARCH_DISTANCE_KM,
-        );
-        const hasDestMatch = tramos.some(
-          (tr) =>
+              t.origen_lat,
+              t.origen_lng,
+            ) <= effectiveRadius;
+        }
+        if (t.destino_lat != null && t.destino_lng != null) {
+          matchesDest =
             haversineKm(
               userDestCoords.lat,
               userDestCoords.lng,
-              tr.lat,
-              tr.lng,
-            ) <= SEARCH_DISTANCE_KM,
-        );
-        const matchByTramo = hasOriginMatch && hasDestMatch;
-        console.log(
-          `[buscarTrayectos] Trayecto ${t.id}: dOrigin=${dOrigin.toFixed(4)}km dDest=${dDest.toFixed(4)}km tramos=${tramos.length} hasOriginMatch=${hasOriginMatch} hasDestMatch=${hasDestMatch} match=${matchByTramo}`,
-        );
-        return matchByTramo;
+              t.destino_lat,
+              t.destino_lng,
+            ) <= effectiveRadius;
+        }
+
+        const tramos = t.Tramos || [];
+        if (!matchesOrigin && tramos.length > 0) {
+          matchesOrigin = tramos.some(
+            (tr) =>
+              haversineKm(
+                userOriginCoords.lat,
+                userOriginCoords.lng,
+                tr.lat,
+                tr.lng,
+              ) <= effectiveRadius,
+          );
+        }
+        if (!matchesDest && tramos.length > 0) {
+          matchesDest = tramos.some(
+            (tr) =>
+              haversineKm(
+                userDestCoords.lat,
+                userDestCoords.lng,
+                tr.lat,
+                tr.lng,
+              ) <= effectiveRadius,
+          );
+        }
+
+        if (matchesOrigin || matchesDest) {
+          candidateTrayectoIds.add(t.id);
+        }
+      }
+    }
+
+    if (candidateTrayectoIds.size === 0) {
+      // No hay candidatos cercanos
+      return res.status(200).json({
+        data: [],
+        pagination: {
+          page: 1,
+          limit,
+          total: 0,
+          totalPages: 1,
+          hasNext: false,
+          hasPrev: false,
+        },
       });
     }
 
-    console.log("[buscarTrayectos] Resultado final filtrado:", filtered.length);
-    const total = filtered.length;
+    // 3. FILTRAR Y ENRIQUECER CON ROUTING ENGINE
+    const candidateIds = Array.from(candidateTrayectoIds);
 
-    res.locals.searchResultsCount = total;
-    const totalPages = Math.max(Math.ceil(total / limit), 1);
-    const pageSlice = filtered.slice(offset, offset + limit);
+    // Obtener trayectos candidatos de la BD
+    const candidateTrayectos = await prisma.trayecto.findMany({
+      where: {
+        id: { in: candidateIds },
+        disponible: { gte: seats },
+        status: { in: ["programado", "en curso"] },
+        hora: {
+          gte: new Date(`${fecha}T00:00:00.000Z`),
+          lte: new Date(`${fecha}T23:59:59.999Z`),
+        },
+      },
+      include: {
+        Tramos: {
+          orderBy: { step_order: "asc" },
+          select: { lat: true, lng: true, address: true, step_order: true },
+        },
+      },
+    });
 
-    let trayectosConImagen = await Promise.all(
-      pageSlice.map(async (trayecto) => {
-        const conductorInfo = await UsersAPI.fetchUserPublicInfo(
-          String(trayecto.conductor),
-        );
-        const img_perfil = conductorInfo?.img_perfil || null;
-        const name = conductorInfo?.name || "Desconocido";
-        return {
-          ...trayecto,
-          conductor: name,
-          conductor_id: trayecto.conductor,
-          img_perfil,
-        };
-      }),
+    if (candidateTrayectos.length === 0) {
+      return res.status(200).json({
+        data: [],
+        pagination: {
+          page: 1,
+          limit,
+          total: 0,
+          totalPages: 1,
+          hasNext: false,
+          hasPrev: false,
+        },
+      });
+    }
+
+    // 4. EVALUAR COMPATIBILIDAD CON ROUTING ENGINE
+    const { RoutingEngine } =
+      await import("../services/routing/routing-engine.js");
+
+    const matchedTrips = RoutingEngine.findCompatibleTrips(candidateTrayectos, {
+      origin: userOriginCoords,
+      destination: userDestCoords,
+      targetDate: fecha,
+      seats,
+      maxDetourKm,
+      maxDetourMins,
+      searchRadiusKm,
+    });
+
+    console.log(
+      `[buscarTrayectos] ${matchedTrips.length} trayectos compatibles de ${candidateTrayectos.length} candidatos`,
     );
 
-    const userId = req.user?.id;
-    const ratedIds = await getRatedTrayectoIdsForUser(
-      userId,
-      trayectosConImagen.map((t) => t.id),
+    // Ordenar por menor desvío, luego por hora
+    matchedTrips.sort((a, b) => {
+      const detourDiff =
+        (a.routingMatch?.detourKm || 0) - (b.routingMatch?.detourKm || 0);
+      if (Math.abs(detourDiff) > 0.5) return detourDiff;
+      return new Date(a.hora).getTime() - new Date(b.hora).getTime();
+    });
+
+    // Aplicar paginación
+    const total = matchedTrips.length;
+    const pageSlice = matchedTrips.slice(offset, offset + limit);
+
+    // Enriquecer con info de conductor
+    const driverIds = [...new Set(pageSlice.map((t) => t.conductor))];
+    const usersList = await UsersAPI.fetchUsersByIds(driverIds);
+    const usersMap = new Map(usersList.map((u) => [u.id, u]));
+
+    const trayectosConImagen = pageSlice.map((t) => {
+      const driverInfo = usersMap.get(String(t.conductor));
+      const tramos = t.Tramos ?? [];
+
+      // Usar RouteGeometryService para formatear la ruta (con encodedPolyline por defecto y fallback)
+      const route = RouteGeometryService.formatRoute(t.Tramos || [], {
+        zoom: 12,
+        precision: "simplified",
+        format: "both", // Devolver tanto encodedPolyline como geometry
+        fallbackCoords: {
+          origen_lat: t.origen_lat,
+          origen_lng: t.origen_lng,
+          destino_lat: t.destino_lat,
+          destino_lng: t.destino_lng,
+        },
+      });
+
+      const conductorNombre = driverInfo?.name || "Desconocido";
+      const conductorObj = {
+        id: t.conductor,
+        nombre: conductorNombre,
+        avatar: driverInfo?.img_perfil || null,
+        rating: driverInfo?.rating || 5.0,
+      };
+
+      return {
+        ...t,
+        Tramos: undefined,
+        conductor: conductorObj,
+        conductor_nombre: conductorNombre,
+        conductor_id: t.conductor,
+        img_perfil: driverInfo?.img_perfil || null,
+        plazasTotales: t.plazas,
+        plazasDisponibles: t.disponible,
+        plazas: t.plazas,
+        disponible: t.disponible,
+        puntosClave: route.keyPoints,
+        geometry: route.geometry, // Solo si se solicita ?format=geojson
+        encodedPolyline: route.encodedPolyline, // NUEVO: Siempre incluido
+        routingMatch: t.routingMatch,
+      };
+    });
+
+    res.locals.searchResultsCount = trayectosConImagen.length;
+    const totalPages = Math.max(
+      Math.ceil(trayectosConImagen.length / limit),
+      1,
     );
-    trayectosConImagen = trayectosConImagen.map((t) => ({
-      ...t,
-      valorado: ratedIds.has(String(t.id)),
-    }));
 
     return res.status(200).json({
       data: trayectosConImagen,
       pagination: {
         page,
         limit,
-        total,
+        total: trayectosConImagen.length,
         totalPages,
         hasNext: page < totalPages,
         hasPrev: page > 1,
-        nextPage: page < totalPages ? page + 1 : null,
-        prevPage: page > 1 ? page - 1 : null,
       },
     });
   } catch (error) {
     console.error("Error en buscarTrayectos:", error);
     return res.status(500).send({
       status: "Error",
-      message: "Error en el servidor al buscar trayectos",
+      message: "Error buscando trayectos",
     });
   }
 }
 
 async function updateLatLong(req, res) {
+  if (req.user?.role !== "admin") {
+    return res.status(403).send({
+      status: "Error",
+      message: "Solo un admin puede actualizar coordenadas masivamente",
+    });
+  }
+
   const trayectos = await prisma.trayecto.findMany({
     select: { id: true, origen: true, destino: true },
   });
@@ -1878,15 +2280,30 @@ async function updateLatLong(req, res) {
 
 async function updateLatLongById(req, res) {
   const { id } = req.params;
+  const authUserId = req.user?.id || req.user?.userId;
+  const userRole = req.user?.role;
+
+  if (!authUserId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
   const trayecto = await prisma.trayecto.findUnique({
     where: { id },
-    select: { origen: true, destino: true },
+    select: { origen: true, destino: true, conductor: true },
   });
   if (!trayecto) {
     return res
       .status(404)
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
+
+  if (String(trayecto.conductor) !== String(authUserId) && userRole !== "admin") {
+    return res.status(403).send({
+      status: "Error",
+      message: "No tienes permiso para actualizar este trayecto",
+    });
+  }
+
   const originCoords = await GoogleMapsProvider.geocodeAddress(trayecto.origen);
   const destinationCoords = await GoogleMapsProvider.geocodeAddress(
     trayecto.destino,
@@ -1903,6 +2320,7 @@ async function updateLatLongById(req, res) {
 
   return res.sendStatus(204);
 }
+
 
 async function obtenerTrayectoCompleto(req, res) {
   const { id } = req.params;
@@ -2029,6 +2447,11 @@ async function obtenerTrayectoCompleto(req, res) {
       rating: c.rating,
       created_at: c.created_at,
     })),
+    route: RouteGeometryService.formatRoute(trayecto.Tramos || [], {
+      zoom: 15,
+      precision: "full",
+      format: "both", // Devolver tanto encodedPolyline como geometry
+    }),
   };
 
   return res.status(200).json(response);
@@ -2244,17 +2667,24 @@ async function buscarTrayectosPorEvento(req, res) {
       status: { notIn: TRAYECTO_INACTIVE_STATUSES },
     };
 
+    if (f && /^\d{4}-\d{2}-\d{2}$/.test(f)) {
+      where.hora = {
+        gte: new Date(`${f}T00:00:00.000Z`),
+        lte: new Date(`${f}T23:59:59.999Z`),
+      };
+    }
+
+    // Obtener trayectos del evento con Tramos
     let rows = await prisma.trayecto.findMany({
       where,
       orderBy: { hora: "asc" },
+      include: {
+        Tramos: {
+          orderBy: { step_order: "asc" },
+          select: { lat: true, lng: true, address: true, step_order: true },
+        },
+      },
     });
-
-    if (f && /^\d{4}-\d{2}-\d{2}$/.test(f)) {
-      rows = rows.filter((t) => {
-        const trayectoDate = new Date(t.hora).toISOString().split("T")[0];
-        return trayectoDate === f;
-      });
-    }
 
     if (dir === "ida") {
       rows = rows.filter(
@@ -2272,46 +2702,93 @@ async function buscarTrayectosPorEvento(req, res) {
       );
     }
 
-    const candidateIds = rows.map((t) => t.id);
-    let tramosByTrayecto = new Map();
-    if (candidateIds.length > 0) {
-      const tramos = await prisma.tramo.findMany({
-        where: { id_trayecto: { in: candidateIds } },
-        select: { id_trayecto: true, lat: true, lng: true },
-      });
-      for (const tramo of tramos) {
-        if (!tramosByTrayecto.has(tramo.id_trayecto)) {
-          tramosByTrayecto.set(tramo.id_trayecto, []);
-        }
-        tramosByTrayecto.get(tramo.id_trayecto).push(tramo);
+    // Usar R-Tree para búsqueda espacial si se proporcionan coordenadas de usuario
+    let filtered = rows;
+    if (!isNaN(userLat) && !isNaN(userLng)) {
+      const { globalSpatialIndex } =
+        await import("../services/routing/spatial-index.js");
+      const { RoutingEngine } =
+        await import("../services/routing/routing-engine.js");
+
+      // Buscar trayectos cercanos a la ubicación del usuario
+      const nearbyMatches = globalSpatialIndex.searchNearbySegments(
+        userLat,
+        userLng,
+        searchRadiusKm,
+      );
+      const nearbyTrayectoIds = new Set(
+        nearbyMatches.map((m) => m.entry.trayectoId),
+      );
+
+      if (nearbyTrayectoIds.size > 0) {
+        // Filtrar trayectos que están en el R-Tree y coinciden con el evento
+        rows = rows.filter((t) => nearbyTrayectoIds.has(t.id));
+      } else {
+        // Fallback: filtrado por distancia haversine tradicional
+        rows = rows.filter((t) => {
+          const dOrigin = haversineKm(
+            userLat,
+            userLng,
+            t.origen_lat,
+            t.origen_lng,
+          );
+          if (dOrigin <= searchRadiusKm) return true;
+
+          const tramos = t.Tramos ?? [];
+          const hasTramoMatch = tramos.some(
+            (tr) =>
+              haversineKm(userLat, userLng, tr.lat, tr.lng) <= searchRadiusKm,
+          );
+          return hasTramoMatch;
+        });
       }
+    } else {
+      // Fallback: filtrado por distancia haversine tradicional
+      rows = rows.filter((t) => {
+        const dOrigin = haversineKm(
+          userLat,
+          userLng,
+          t.origen_lat,
+          t.origen_lng,
+        );
+        if (dOrigin <= searchRadiusKm) return true;
+
+        const tramos = t.Tramos ?? [];
+        const hasTramoMatch = tramos.some(
+          (tr) =>
+            haversineKm(userLat, userLng, tr.lat, tr.lng) <= searchRadiusKm,
+        );
+        return hasTramoMatch;
+      });
     }
 
-    const filtered = rows.filter((t) => {
-      const dOrigin = haversineKm(userLat, userLng, t.origen_lat, t.origen_lng);
-      if (dOrigin <= searchRadiusKm) return true;
+    filtered = rows;
 
-      const tramos = tramosByTrayecto.get(t.id) || [];
-      const hasTramoMatch = tramos.some(
-        (tr) => haversineKm(userLat, userLng, tr.lat, tr.lng) <= searchRadiusKm,
-      );
-      return hasTramoMatch;
-    });
-
-    const conductorIds = [...new Set(filtered.map((t) => String(t.conductor)))];
+    // Enriquecer con geometría y info de conductor
+    const conductorIds = [...new Set(rows.map((t) => String(t.conductor)))];
     const usersList = await UsersAPI.fetchUsersByIds(conductorIds);
     const usersMap = new Map(usersList.map((u) => [u.id, u]));
 
     const userId = req.user?.id;
     const ratedIds = await getRatedTrayectoIdsForUser(
       userId,
-      filtered.map((t) => t.id),
+      rows.map((t) => t.id),
     );
 
-    const data = filtered.map((t) => {
+    const data = rows.map((t) => {
       const conductorInfo = usersMap.get(String(t.conductor));
+      const tramos = t.Tramos ?? [];
+
+      // Usar RouteGeometryService para formatear la ruta
+      const route = RouteGeometryService.formatRoute(t.Tramos || [], {
+        zoom: 14,
+        precision: "simplified",
+        format: "both", // Devolver tanto encodedPolyline como geometry
+      });
+
       return {
         ...t,
+        Tramos: undefined,
         conductor: conductorInfo?.name || "Desconocido",
         conductor_id: t.conductor,
         img_perfil: conductorInfo?.img_perfil || null,
@@ -2320,6 +2797,9 @@ async function buscarTrayectosPorEvento(req, res) {
           Math.round(
             haversineKm(userLat, userLng, t.origen_lat, t.origen_lng) * 100,
           ) / 100,
+        puntosClave: route.keyPoints,
+        geometry: route.geometry,
+        encodedPolyline: route.encodedPolyline, // NUEVO: Siempre incluido
       };
     });
 
@@ -2728,6 +3208,10 @@ async function adminDeleteTrayecto(req, res) {
       prisma.trayecto.delete({ where: { id } }),
     ]);
 
+    // Desindexar trayecto del R-Tree en memoria
+    RoutingEngine.removeTrayecto(id);
+    console.log(`[adminDeleteTrayecto] Trayecto ${id} desindexado de R-Tree.`);
+
     return res
       .status(200)
       .json({ status: "Success", message: "Trayecto eliminado correctamente" });
@@ -2797,6 +3281,7 @@ export const TrayectosController = {
   crearTrayecto,
   crearTrayectoEvento,
   obtenerTrayectos: getTrayectos,
+  obtenerTrayectosEnViewport,
   eliminarTrayecto,
   obtenerTrayectoPorId,
   obtenerTrayectoCompleto,

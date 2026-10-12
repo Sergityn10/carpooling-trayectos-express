@@ -1,7 +1,11 @@
 import { prisma } from "../database.js";
 
 async function trackTrayectoSearch(req, res, next) {
-  const { origin, destination, date, passengers } = req.query;
+  const origin = req.query.origin ?? req.query.origen;
+  const destination = req.query.destination ?? req.query.destino;
+  const date = req.query.date ?? req.query.fecha;
+  const passengers =
+    req.query.passengers ?? req.query.plazas ?? req.query.pasajeros;
 
   if (!origin || !destination || !date || !passengers) {
     return next();

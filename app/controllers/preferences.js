@@ -272,10 +272,22 @@ async function updateMyPreferences(req, res) {
   }
 }
 async function insertDefaultUserPreferences(req, res) {
-  const userId = req.user?.userId;
-  if (!userId) {
+  const authUserId = req.user?.userId ?? req.user?.id;
+  const userRole = req.user?.role;
+  const targetUserId = req.params?.userId || authUserId;
+
+  if (!authUserId) {
     return res.status(401).send({ status: "Error", message: "No autenticado" });
   }
+
+  if (targetUserId && String(targetUserId) !== String(authUserId) && userRole !== "admin") {
+    return res.status(403).send({
+      status: "Error",
+      message: "No tienes permiso para insertar preferencias para este usuario",
+    });
+  }
+
+  const userId = targetUserId;
   try {
     const definitions = await prisma.preferenceDefinition.findMany({
       where: { is_active: 1 },

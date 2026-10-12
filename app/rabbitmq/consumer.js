@@ -1,5 +1,6 @@
 import { prisma } from "../database.js";
 import { RESERVA_STATUS, TRAYECTO_STATUS } from "../constants/statuses.js";
+import { RoutingEngine } from "../services/routing/routing-engine.js";
 
 async function handleUserDeleted(data) {
   console.log(
@@ -60,6 +61,16 @@ async function handleUserDeleted(data) {
   }
 
   try {
+    const trayectosToCancel = await prisma.trayecto.findMany({
+      where: {
+        conductor: userStr,
+        status: {
+          notIn: [TRAYECTO_STATUS.FINALIZADO, TRAYECTO_STATUS.CANCELADO],
+        },
+      },
+      select: { id: true },
+    });
+
     const trayectosResult = await prisma.trayecto.updateMany({
       where: {
         conductor: userStr,
@@ -71,6 +82,14 @@ async function handleUserDeleted(data) {
     });
     console.log(
       `[EventConsumer] user.deleted - ✓ ${trayectosResult.count} trayectos cancelados`,
+    );
+
+    // Desindexar trayectos cancelados del R-Tree en memoria
+    for (const t of trayectosToCancel) {
+      RoutingEngine.removeTrayecto(t.id);
+    }
+    console.log(
+      `[EventConsumer] user.deleted - ✓ ${trayectosToCancel.length} trayectos desindexados de R-Tree.`,
     );
   } catch (error) {
     console.error(
@@ -155,6 +174,14 @@ async function handleCarDeleted(data) {
       data: { status: TRAYECTO_STATUS.CANCELADO },
     });
     console.log(`[EventConsumer] car.deleted - ✓ Trayectos cancelados`);
+
+    // Desindexar trayectos cancelados del R-Tree en memoria
+    for (const id of trayectoIds) {
+      RoutingEngine.removeTrayecto(id);
+    }
+    console.log(
+      `[EventConsumer] car.deleted - ✓ ${trayectoIds.length} trayectos desindexados de R-Tree.`,
+    );
   } catch (error) {
     console.error(
       `[EventConsumer] car.deleted - ✗ Error al cancelar trayectos:`,
@@ -677,6 +704,14 @@ async function handlePlatformEventDeleted(data) {
     where: { id: { in: trayectoIds } },
     data: { status: TRAYECTO_STATUS.CANCELADO },
   });
+
+  // Desindexar trayectos cancelados del R-Tree en memoria
+  for (const id of trayectoIds) {
+    RoutingEngine.removeTrayecto(id);
+  }
+  console.log(
+    `[EventConsumer] platform_event.deleted - ✓ ${trayectoIds.length} trayectos desindexados de R-Tree.`,
+  );
 
   await prisma.reserva.updateMany({
     where: {

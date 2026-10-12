@@ -4,6 +4,7 @@ import { UsersAPI } from "./utils/users-api.js";
 import { NotificationsAPI } from "./utils/notifications-api.js";
 import { ReservaController } from "./controllers/reserva.js";
 import { TRAYECTO_STATUS } from "./constants/statuses.js";
+import { RoutingEngine } from "./services/routing/routing-engine.js";
 
 function getMessagesBaseHeaders() {
   const headers = {
@@ -330,6 +331,10 @@ async function tickTrayectoStatusAndNotify() {
     });
 
     if (result.count > 0) {
+      // Desindexar trayecto del R-Tree en memoria (Lazy Deletion O(1))
+      RoutingEngine.removeTrayecto(trayecto.id);
+      console.log(`[cron] Trayecto ${trayecto.id} desindexado de R-Tree (auto-finalizado).`);
+
       try {
         await notifyTrayectoFinalizado(trayecto);
       } catch (e) {

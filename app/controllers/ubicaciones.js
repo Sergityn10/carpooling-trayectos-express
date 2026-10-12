@@ -98,6 +98,13 @@ async function crearUbicacion(req, res) {
 }
 
 async function obtenerUbicaciones(req, res) {
+  if (req.user?.role !== "admin") {
+    return res.status(403).send({
+      status: "Error",
+      message: "Solo un admin puede listar todas las ubicaciones",
+    });
+  }
+
   try {
     const connection = await database.getConnection();
     const [rows] = await connection.query(`SELECT * FROM ${tableName}`);
@@ -113,6 +120,13 @@ async function obtenerUbicaciones(req, res) {
 
 async function obtenerUbicacionPorId(req, res) {
   const { id } = req.params;
+  const authUserId = req.user?.id || req.user?.userId;
+  const userRole = req.user?.role;
+
+  if (!authUserId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
   try {
     const connection = await database.getConnection();
     const [rows] = await connection.query(
@@ -124,6 +138,14 @@ async function obtenerUbicacionPorId(req, res) {
         .status(404)
         .send({ status: "Error", message: "Ubicación no encontrada" });
     }
+
+    if (String(rows[0].user_id) !== String(authUserId) && userRole !== "admin") {
+      return res.status(403).send({
+        status: "Error",
+        message: "No tienes permiso para ver esta ubicación",
+      });
+    }
+
     return res.status(200).json(rows[0]);
   } catch (error) {
     console.error("Error en obtenerUbicacionPorId:", error);
@@ -135,11 +157,16 @@ async function obtenerUbicacionPorId(req, res) {
 }
 
 async function obtenerUbicacionesPorUsuario(req, res) {
-  const { userId } = req.user || {};
+  const authUserId = req.user?.id || req.user?.userId;
+  const userRole = req.user?.role;
   const { userIdParam } = req.params;
 
-  if (userIdParam && userId && userId !== userIdParam) {
-    return res.status(401).send({
+  if (!authUserId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
+  if (userIdParam && String(authUserId) !== String(userIdParam) && userRole !== "admin") {
+    return res.status(403).send({
       status: "Error",
       message: "No tienes permiso para ver las ubicaciones de este usuario",
     });
@@ -149,7 +176,7 @@ async function obtenerUbicacionesPorUsuario(req, res) {
     const connection = await database.getConnection();
     const [rows] = await connection.query(
       `SELECT * FROM ${tableName} WHERE user_id = ?`,
-      [userIdParam ?? userId],
+      [userIdParam ?? authUserId],
     );
     return res.status(200).json(rows);
   } catch (error) {
@@ -163,6 +190,13 @@ async function obtenerUbicacionesPorUsuario(req, res) {
 
 async function actualizarUbicacion(req, res) {
   const { id } = req.params;
+  const authUserId = req.user?.id || req.user?.userId;
+  const userRole = req.user?.role;
+
+  if (!authUserId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
   const validation = UbicacionMethods.validateUbicacionPartial(req.body);
   if (!validation.success) {
     return res
@@ -192,8 +226,9 @@ async function actualizarUbicacion(req, res) {
         .status(404)
         .send({ status: "Error", message: "Ubicación no encontrada" });
     }
-    if (req.user?.id && String(found[0].user_id) !== String(req.user.id)) {
-      return res.status(401).send({
+
+    if (String(found[0].user_id) !== String(authUserId) && userRole !== "admin") {
+      return res.status(403).send({
         status: "Error",
         message: "No tienes permiso para actualizar esta ubicación",
       });
@@ -231,6 +266,13 @@ async function actualizarUbicacion(req, res) {
 
 async function eliminarUbicacion(req, res) {
   const { id } = req.params;
+  const authUserId = req.user?.id || req.user?.userId;
+  const userRole = req.user?.role;
+
+  if (!authUserId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
   try {
     const connection = await database.getConnection();
     const [found] = await connection.query(
@@ -242,8 +284,9 @@ async function eliminarUbicacion(req, res) {
         .status(404)
         .send({ status: "Error", message: "Ubicación no encontrada" });
     }
-    if (req.user?.id && String(found[0].user_id) !== String(req.user.id)) {
-      return res.status(401).send({
+
+    if (String(found[0].user_id) !== String(authUserId) && userRole !== "admin") {
+      return res.status(403).send({
         status: "Error",
         message: "No tienes permiso para eliminar esta ubicación",
       });

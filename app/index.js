@@ -2,8 +2,9 @@ import cookieParser from "cookie-parser";
 import express from "express";
 import morgan from "morgan";
 import cors from "cors";
-import { database } from "./database.js";
-import { initDatabase } from "./database.js";
+import helmet from "helmet";
+import { database, initDatabase, prisma } from "./database.js";
+import { RoutingEngine } from "./services/routing/routing-engine.js";
 import { TrayectosController } from "./controllers/trayectos.js";
 import { ReservaController } from "./controllers/reserva.js";
 import { OpinionsController } from "./controllers/opinions.js";
@@ -23,14 +24,46 @@ import { CAEUtils } from "./utils/cae.js";
 import { AdminController } from "./controllers/admin.js";
 import { startRabbitMQ } from "./rabbitmq/index.js";
 import { trackTrayectoSearch } from "./middleware/search-tracker.js";
+import {
+  generalLimiter,
+  searchLimiter,
+  mutationLimiter,
+  adminLimiter,
+} from "./middleware/rate-limiter.js";
 
 const app = express();
 app.set("etag", false);
+app.disable("x-powered-by"); // Desactiva encabezado x-powered-by (LOW-01 a LOW-13, Banners)
+
+// Hardening de cabeceras HTTP mediante Helmet (HSTS, CSP, nosniff, frameguard)
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'", "https:"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
+    frameguard: { action: "deny" },
+    noSniff: true,
+  }),
+);
 
 try {
   await initDatabase();
+  await RoutingEngine.initialize(prisma);
 } catch (error) {
-  console.error("Error al inicializar la base de datos:", error.message);
+  console.error("Error al inicializar la base de datos o el índice espacial:", error.message);
 }
 
 startTrayectoStatusCron({
@@ -53,7 +86,7 @@ app.set("port", port);
 app.listen(app.get("port"), () => {
   console.log("Servidor iniciado en el puerto " + app.get("port"));
 });
-app.disable("x-powered-by"); // Desactiva el encabezado x-powered-by
+
 let list_origins = [
   `${process.env.USUARIOS_URL}`,
   `${process.env.FRONTEND_URL}`,
@@ -63,7 +96,8 @@ let list_origins = [
   "https://www.youconnext.es",
   "https://admin.youconnext.es",
 ];
-//Middewares
+
+// Middlewares
 app.use(express.json());
 app.use(morgan("dev"));
 app.use(cookieParser());
@@ -75,12 +109,27 @@ app.use(
   }),
 );
 
+// Rate limiting global en todos los endpoints /api
+app.use("/api", generalLimiter);
+app.use("/api/admin", adminLimiter);
+
+
 app.get("/api/trayecto", utilsAuthentication.authenticate, async (req, res) => {
   TrayectosController.obtenerTrayectos(req, res);
 });
 
 app.get(
+  "/api/trayecto/viewport",
+  searchLimiter,
+  utilsAuthentication.tryAuthenticate,
+  async (req, res) => {
+    TrayectosController.obtenerTrayectosEnViewport(req, res);
+  },
+);
+
+app.get(
   "/api/trayecto/search",
+  searchLimiter,
   utilsAuthentication.tryAuthenticate,
   trackTrayectoSearch,
   async (req, res) => {
@@ -168,18 +217,39 @@ app.get(
   },
 );
 
-app.put("/api/trayecto/update/id/:id", async (req, res) => {
-  TrayectosController.updateLatLongById(req, res);
-});
-app.put("/api/trayecto/update", async (req, res) => {
-  TrayectosController.updateLatLong(req, res);
-});
-app.put("/api/trayecto/:id", async (req, res) => {
-  TrayectosController.actualizarTrayecto(req, res);
-});
-app.patch("/api/trayecto/:id", async (req, res) => {
-  TrayectosController.patchTrayecto(req, res);
-});
+app.put(
+  "/api/trayecto/update/id/:id",
+  utilsAuthentication.authenticate,
+  mutationLimiter,
+  async (req, res) => {
+    TrayectosController.updateLatLongById(req, res);
+  },
+);
+app.put(
+  "/api/trayecto/update",
+  utilsAuthentication.authenticate,
+  utilsAuthentication.requireAdmin,
+  mutationLimiter,
+  async (req, res) => {
+    TrayectosController.updateLatLong(req, res);
+  },
+);
+app.put(
+  "/api/trayecto/:id",
+  utilsAuthentication.authenticate,
+  mutationLimiter,
+  async (req, res) => {
+    TrayectosController.actualizarTrayecto(req, res);
+  },
+);
+app.patch(
+  "/api/trayecto/:id",
+  utilsAuthentication.authenticate,
+  mutationLimiter,
+  async (req, res) => {
+    TrayectosController.patchTrayecto(req, res);
+  },
+);
 app.post(
   "/api/trayecto/:id/finalizar",
   utilsAuthentication.authenticate,
@@ -259,9 +329,14 @@ app.get(
     TrayectosController.obtenerTrayectosPorConductor(req, res);
   },
 );
-app.delete("/api/trayecto/:id", async (req, res) => {
-  TrayectosController.eliminarTrayecto(req, res);
-});
+app.delete(
+  "/api/trayecto/:id",
+  utilsAuthentication.authenticate,
+  mutationLimiter,
+  async (req, res) => {
+    TrayectosController.eliminarTrayecto(req, res);
+  },
+);
 
 //CAE
 app.get(
@@ -597,36 +672,60 @@ app.delete(
 app.post(
   "/api/comments",
   utilsAuthentication.authenticate,
+  mutationLimiter,
   async (req, res) => {
-    // Llama a la función addOpinion del controlador de opiniones
     OpinionsController.addOpinion(req, res);
   },
 );
 
-app.get("/api/comments/user_id_commentator/:userId", async (req, res) => {
-  // Llama a la función getOpinionByUserIdCommented del controlador de opiniones
-  OpinionsController.getOpinionByUserIdCommentator(req, res);
-});
+app.get(
+  "/api/comments/user_id_commentator/:userId",
+  utilsAuthentication.tryAuthenticate,
+  async (req, res) => {
+    OpinionsController.getOpinionByUserIdCommentator(req, res);
+  },
+);
 
-app.get("/api/comments/user_id_trayect/:userId", async (req, res) => {
-  // Llama a la función getOpinionByUserIdCommented del controlador de opiniones
-  OpinionsController.getOpinionByUserIdTrayect(req, res);
-});
-app.get("/api/comments/travelId/:travelId", async (req, res) => {
-  OpinionsController.getOpinionsByTravelId(req, res);
-});
-app.delete("/api/comments/:id", async (req, res) => {
-  OpinionsController.deleteOpinion(req, res);
-});
-app.patch("/api/comments/:id", async (req, res) => {
-  OpinionsController.patchComment(req, res);
-});
+app.get(
+  "/api/comments/user_id_trayect/:userId",
+  utilsAuthentication.tryAuthenticate,
+  async (req, res) => {
+    OpinionsController.getOpinionByUserIdTrayect(req, res);
+  },
+);
+app.get(
+  "/api/comments/travelId/:travelId",
+  utilsAuthentication.tryAuthenticate,
+  async (req, res) => {
+    OpinionsController.getOpinionsByTravelId(req, res);
+  },
+);
+app.delete(
+  "/api/comments/:id",
+  utilsAuthentication.authenticate,
+  mutationLimiter,
+  async (req, res) => {
+    OpinionsController.deleteOpinion(req, res);
+  },
+);
+app.patch(
+  "/api/comments/:id",
+  utilsAuthentication.authenticate,
+  mutationLimiter,
+  async (req, res) => {
+    OpinionsController.patchComment(req, res);
+  },
+);
 
 //RESERVAS
-app.post("/api/reserva", utilsAuthentication.authenticate, async (req, res) => {
-  // Llama a la función addReserva del controlador de reservas
-  ReservaController.addReserva(req, res);
-});
+app.post(
+  "/api/reserva",
+  utilsAuthentication.authenticate,
+  mutationLimiter,
+  async (req, res) => {
+    ReservaController.addReserva(req, res);
+  },
+);
 
 app.get(
   "/api/reserva/stats/:userId",
@@ -636,9 +735,13 @@ app.get(
   },
 );
 
-app.get("/api/reserva/profile/:userId", async (req, res) => {
-  ReservaController.getPublicProfile(req, res);
-});
+app.get(
+  "/api/reserva/profile/:userId",
+  utilsAuthentication.tryAuthenticate,
+  async (req, res) => {
+    ReservaController.getPublicProfile(req, res);
+  },
+);
 
 app.post(
   "/api/reserva/qr",
@@ -713,6 +816,8 @@ app.get(
 );
 app.post(
   "/api/users/:userId/preferences/default",
+  utilsAuthentication.authenticate,
+  mutationLimiter,
   PreferencesController.insertDefaultUserPreferences,
 );
 
@@ -727,6 +832,7 @@ app.get(
 app.put(
   "/api/preferences/me",
   utilsAuthentication.authenticate,
+  mutationLimiter,
   async (req, res) => {
     PreferencesController.updateMyPreferences(req, res);
   },
@@ -744,14 +850,20 @@ app.get(
 app.post(
   "/api/ubicacion",
   utilsAuthentication.authenticate,
+  mutationLimiter,
   async (req, res) => {
     UbicacionesController.crearUbicacion(req, res);
   },
 );
 
-app.get("/api/ubicacion", async (req, res) => {
-  UbicacionesController.obtenerUbicaciones(req, res);
-});
+app.get(
+  "/api/ubicacion",
+  utilsAuthentication.authenticate,
+  utilsAuthentication.requireAdmin,
+  async (req, res) => {
+    UbicacionesController.obtenerUbicaciones(req, res);
+  },
+);
 
 // IMPORTANTE: ruta de user_id antes que :id
 app.get(
@@ -762,13 +874,18 @@ app.get(
   },
 );
 
-app.get("/api/ubicacion/:id", async (req, res) => {
-  UbicacionesController.obtenerUbicacionPorId(req, res);
-});
+app.get(
+  "/api/ubicacion/:id",
+  utilsAuthentication.authenticate,
+  async (req, res) => {
+    UbicacionesController.obtenerUbicacionPorId(req, res);
+  },
+);
 
 app.put(
   "/api/ubicacion/:id",
   utilsAuthentication.authenticate,
+  mutationLimiter,
   async (req, res) => {
     UbicacionesController.actualizarUbicacion(req, res);
   },
@@ -777,6 +894,7 @@ app.put(
 app.delete(
   "/api/ubicacion/:id",
   utilsAuthentication.authenticate,
+  mutationLimiter,
   async (req, res) => {
     UbicacionesController.eliminarUbicacion(req, res);
   },
@@ -1512,4 +1630,19 @@ app.get("/api/oil/precios/provincia/:provincia", async (req, res) => {
       message: error?.message ?? "Error consultando precios por provincia",
     });
   }
+});
+
+// Middleware centralizado de manejo de errores (CWE-209 / Prevención de fuga de información)
+// Garantiza que no se filtren detalles de consultas SQL, contraseñas, o stack traces en producción
+app.use((err, req, res, next) => {
+  console.error("[UnhandledServerError]", err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  const isDev = process.env.NODE_ENV === "development";
+  return res.status(err.status || 500).json({
+    status: "Error",
+    code: err.code || "INTERNAL_SERVER_ERROR",
+    message: isDev ? err.message : "Error interno del servidor",
+  });
 });

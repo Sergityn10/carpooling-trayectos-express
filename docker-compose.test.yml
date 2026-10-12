@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  # Base de datos MariaDB en memoria (tmpfs) para tests ultrarrápidos
+  db-test:
+    image: mariadb:11
+    container_name: carpooling-db-test
+    environment:
+      - MYSQL_ROOT_PASSWORD=test_root_password
+      - MYSQL_DATABASE=carpooling_test
+      - MYSQL_USER=test_user
+      - MYSQL_PASSWORD=test_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - db-test-data:/var/lib/mysql
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    networks:
+      - test-network
+
+  # Runner de tests Node.js
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: carpooling-test-runner
+    environment:
+      - NODE_ENV=test
+      - DATABASE_HOST=db-test
+      - DATABASE_PORT=3306
+      - DATABASE_USER=test_user
+      - DATABASE_PASSWORD=test_password
+      - DATABASE_NAME=carpooling_test
+      - PUBLIC_KEY=${PUBLIC_KEY:-test_public_key}
+      - USUARIOS_URL=${USUARIOS_URL:-http://host.docker.internal:4000}
+      - MESSAGES_URL=${MESSAGES_URL:-http://host.docker.internal:4002}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
+    depends_on:
+      db-test:
+        condition: service_healthy
+    networks:
+      - test-network
+    command: >
+      sh -c "
+        echo 'Waiting for database to be fully ready...' &&
+        npx wait-on tcp:db-test:3306 -t 60000 &&
+        echo 'Database ready, pushing schema...' &&
+        npx prisma db push --skip-generate &&
+        echo 'Schema pushed, running tests...' &&
+        npm run test:all
+      "
+
+volumes:
+  db-test-data:
+
+networks:
+  test-network:
+    driver: bridge

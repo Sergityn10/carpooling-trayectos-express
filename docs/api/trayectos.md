@@ -75,7 +75,129 @@ GET /api/trayecto
 
 ---
 
-### Buscar trayectos
+### Obtener trayectos en viewport del mapa (Exploración geoespacial)
+
+```
+GET /api/trayecto/viewport
+```
+
+**Auth:** Opcional (`tryAuthenticate`)
+
+**Descripción:** Devuelve los trayectos activos que intersectan el bounding box visible del mapa. Diseñado para exploración interactiva estilo Airbnb/Uber: el frontend envía los límites de la pantalla (`minLat`, `maxLat`, `minLng`, `maxLng`) y el nivel de zoom, y el backend filtra mediante índice espacial R-Tree en memoria para latencia < 100ms.
+
+**Query params:**
+
+| Parámetro | Tipo | Requerido | Por defecto | Descripción |
+| --------- | ---- | :-------: | :---------: | ----------- |
+| `minLat`  | Float | **Sí** | - | Latitud suroeste (límite inferior) [-90, 90] |
+| `minLng`  | Float | **Sí** | - | Longitud suroeste (límite izquierdo) [-180, 180] |
+| `maxLat`  | Float | **Sí** | - | Latitud noreste (límite superior) [-90, 90] |
+| `maxLng`  | Float | **Sí** | - | Longitud noreste (límite derecho) [-180, 180] |
+| `zoom`    | Int   | No | `12` | Nivel de zoom del mapa (1-22) |
+| `fecha`   | String (YYYY-MM-DD) | No | `null` | Filtrar trayectos a partir de una fecha |
+| `plazas`  | Int   | No | `1` | Plazas mínimas disponibles requeridas (1-8) |
+| `precision` | Enum (`full` \| `simplified` \| `bounds`) | No | `simplified` | Nivel de detalle de la geometría |
+| `limit`   | Int   | No | `50` | Máximo de trayectos a devolver (1-100) |
+
+**Reglas de validación:**
+- `minLat <= maxLat`
+- `minLng <= maxLng` (para viewports que no cruzan el meridiano ±180°)
+
+**Comportamiento según `precision` y `zoom`:**
+
+| Zoom | `precision` | Geometría devuelta |
+|------|-------------|-------------------|
+| 1-9  | `bounds` (forzado) | Solo `{origen: {lat,lng}, destino: {lat,lng}}` para clustering |
+| 10-14 | `simplified` | Polilínea simplificada (RDP ε adaptativo) |
+| 15+  | `full` | Todos los tramos originales ordenados |
+
+**Respuesta 200 (precision=simplified/full):**
+
+```json
+{
+  "status": "Success",
+  "meta": {
+    "totalMatches": 12,
+    "viewport": {
+      "minLat": 40.4000,
+      "minLng": -3.7200,
+      "maxLat": 40.4500,
+      "maxLng": -3.6500,
+      "zoom": 13
+    }
+  },
+  "data": [
+    {
+      "id": "c1f7a29e-862d-4235-a149-14a938c5df72",
+      "origen": "Madrid, Atocha",
+      "destino": "Toledo, Centro",
+      "hora": "2026-10-07T08:30:00.000Z",
+      "precio": 4.50,
+      "plazasTotales": 4,
+      "plazasDisponibles": 2,
+      "conductor": {
+        "id": "usr_998124",
+        "nombre": "Carlos R.",
+        "avatar": "https://...",
+        "rating": 4.8
+      },
+      "puntosClave": {
+        "origen": { "lat": 40.4065, "lng": -3.6901 },
+        "destino": { "lat": 39.8628, "lng": -4.0273 }
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-3.6901, 40.4065],
+          [-3.6950, 40.3920],
+          [-3.7100, 40.3500],
+          [-4.0273, 39.8628]
+        ]
+      },
+      "driverPreferences": {}
+    }
+  ]
+}
+```
+
+**Respuesta 200 (precision=bounds / zoom < 10):**
+
+```json
+{
+  "status": "Success",
+  "meta": {
+    "totalMatches": 45,
+    "viewport": { "minLat": 40.0, "minLng": -4.0, "maxLat": 41.0, "maxLng": -3.0, "zoom": 8 },
+    "clustered": true
+  },
+  "data": [
+    {
+      "id": "c1f7a29e-862d-4235-a149-14a938c5df72",
+      "precio": 4.50,
+      "plazasDisponibles": 2,
+      "hora": "2026-10-07T08:30:00.000Z",
+      "origen": { "lat": 40.4065, "lng": -3.6901, "nombre": "Madrid" },
+      "destino": { "lat": 39.8628, "lng": -4.0273, "nombre": "Toledo" }
+    }
+  ]
+}
+```
+
+**Respuestas de error:**
+
+| Código | Causa |
+|--------|-------|
+| 400 | Parámetros inválidos (coordenadas fuera de rango, min > max, etc.) |
+| 500 | Error interno del servidor |
+
+**Ejemplo de petición:**
+```bash
+curl "https://api.ejemplo.com/api/trayecto/viewport?minLat=40.4&minLng=-3.72&maxLat=40.45&maxLng=-3.65&zoom=13&plazas=2&precision=simplified&limit=50"
+```
+
+---
+
+### Buscar trayectos (Matching Inteligente con Desvíos)
 
 ```
 GET /api/trayecto/search
@@ -83,17 +205,76 @@ GET /api/trayecto/search
 
 **Auth:** Opcional
 
+**Descripción:** Busca trayectos compatibles con el origen, destino y fecha del pasajero, evaluando desvíos tolerables para el conductor. Utiliza el motor de enrutamiento (`RoutingEngine`) para calcular puntos de recogida/entrega óptimos, desvíos en km y minutos, y filtrar por capacidad y radio de búsqueda.
+
 **Query params:**
 
-| Param       | Tipo   | Descripción                   |
-| ----------- | ------ | ----------------------------- |
-| `origen`    | String | Dirección o ciudad de origen  |
-| `destino`   | String | Dirección o ciudad de destino |
-| `fecha`     | String | Fecha en formato `YYYY-MM-DD` |
-| `plazas`    | Int    | Plazas mínimas requeridas     |
-| `evento_id` | UUID   | Filtrar por evento            |
+| Param       | Tipo   | Por defecto | Descripción                              |
+| ----------- | ------ | ----------- | ---------------------------------------- |
+| `origen`    | String | Requerido   | Dirección o ciudad de origen             |
+| `destino`   | String | Requerido   | Dirección o ciudad de destino            |
+| `fecha`     | String | Requerido   | Fecha en formato `YYYY-MM-DD`            |
+| `plazas`    | Int    | `1`         | Plazas mínimas requeridas                |
+| `evento_id` | UUID   | Opcional    | Filtrar por evento                       |
+| `maxDetourKm` | Float | `5.0`       | Desvío máximo tolerable para el conductor (km) |
+| `maxDetourMins` | Int  | `15`        | Tiempo máximo de retraso tolerable (minutos) |
+| `searchRadiusKm`| Float | `2.5`      | Radio inicial de búsqueda espacial en R-Tree |
+| `passengers`  | Int   | `1`         | Número de pasajeros                      |
 
 > **Nota:** Cada búsqueda se registra automáticamente en la tabla `trayecto_search_history` con origen, destino, fecha, pasajeros, coordenadas geocodificadas, número de resultados, IP y User-Agent. Si el usuario está autenticado, se asocia su `user_id`; si no, queda como anónimo.
+
+**Respuesta 200 (con geometría y matching):**
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "origen": "Madrid",
+      "destino": "Toledo",
+      "hora": "2026-10-07T08:30:00.000Z",
+      "precio": 4.50,
+      "plazasTotales": 4,
+      "plazasDisponibles": 2,
+      "conductor": {
+        "id": "usr_998124",
+        "nombre": "Carlos R.",
+        "avatar": "https://...",
+        "rating": 4.8
+      },
+      "puntosClave": {
+        "origen": { "lat": 40.4065, "lng": -3.6901 },
+        "destino": { "lat": 39.8628, "lng": -4.0273 }
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-3.6901, 40.4065],
+          [-3.6950, 40.3920],
+          [-3.7100, 40.3500],
+          [-4.0273, 39.8628]
+        ]
+      },
+      "routingMatch": {
+        "detourKm": 1.4,
+        "detourMins": 4,
+        "detourRatio": 1.02,
+        "pickupPoint": { "lat": 40.308, "lng": -3.732 },
+        "dropoffPoint": { "lat": 39.865, "lng": -4.025 },
+        "passengerRideKm": 65.2
+      }
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 25,
+    "totalPages": 3,
+    "hasNext": true,
+    "hasPrev": false
+  }
+}
+```
 
 ---
 
@@ -243,7 +424,13 @@ GET /api/trayecto/proximos
 
 **Descripción:** Devuelve los próximos trayectos del usuario (como conductor o pasajero con reserva activa) dentro de las próximas 48 horas o en curso. **Sin paginación** (devuelve todos los resultados). Incluye reservas confirmadas con info de pasajeros (nombre e imagen).
 
-**Respuesta 200:**
+**Query params:**
+
+| Parámetro | Tipo | Por defecto | Descripción |
+| --------- | ---- | ----------- | ----------- |
+| `zoom`    | Int  | `12`        | Nivel de zoom para simplificación RDP (1-20) |
+
+**Respuesta 200 (con geometría y encodedPolyline):**
 
 ```json
 {
@@ -267,7 +454,19 @@ GET /api/trayecto/proximos
           "nombre": "Ana López",
           "img_perfil": "https://..."
         }
-      ]
+      ],
+      "puntosClave": {
+        "origen": { "lat": 40.4168, "lng": -3.7038 },
+        "destino": { "lat": 39.4699, "lng": -0.3763 }
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-3.7038, 40.4168],
+          [-0.3763, 39.4699]
+        ]
+      },
+      "encodedPolyline": "_p~iF~ps|U_ulLnnqC_mqN..."
     }
   ]
 }
@@ -295,7 +494,50 @@ GET /api/trayecto/:id/completo
 
 **Auth:** Opcional
 
-**Respuesta:** Trayecto + reservas + eventos + preferencias + información del conductor.
+**Query params:**
+
+| Parámetro | Tipo | Por defecto | Descripción |
+| --------- | ---- | ----------- | ----------- |
+| `zoom`    | Int  | `15`        | Nivel de zoom para detalle de geometría (1-20) |
+| `format`  | Enum | `both`      | `geojson` \| `encoded` \| `both` |
+
+**Respuesta 200 (con geometría completa y encodedPolyline):**
+
+```json
+{
+  "id": "uuid",
+  "origen": "Madrid",
+  "destino": "Toledo",
+  "hora": "2026-10-07T08:30:00.000Z",
+  "precio": 4.50,
+  "plazasTotales": 4,
+  "plazasDisponibles": 2,
+  "conductor": {
+    "id": "usr_998124",
+    "nombre": "Carlos R.",
+    "avatar": "https://...",
+    "rating": 4.8
+  },
+  "puntosClave": {
+    "origen": { "lat": 40.4065, "lng": -3.6901 },
+    "destino": { "lat": 39.8628, "lng": -4.0273 }
+  },
+  "geometry": {
+    "type": "LineString",
+    "coordinates": [
+      [-3.6901, 40.4065],
+      [-3.6950, 40.3920],
+      [-3.7100, 40.3500],
+      [-4.0273, 39.8628]
+    ]
+  },
+  "encodedPolyline": "_p~iF~ps|U_ulLnnqC_mqN...",
+  "driverPreferences": {},
+  "pasajeros": [...],
+  "eventos": [...],
+  "comentarios": [...]
+}
+```
 
 ---
 
@@ -438,7 +680,7 @@ GET /api/trayecto/evento/550e8400.../cerca?ciudad=Madrid&direccion=ida&fecha=202
 GET /api/trayecto/evento/550e8400.../cerca?ciudad=Toledo&radius=10&direccion=vuelta
 ```
 
-**Respuesta 200:**
+**Respuesta 200 (con geometría y encodedPolyline):**
 
 ```json
 {
@@ -463,7 +705,21 @@ GET /api/trayecto/evento/550e8400.../cerca?ciudad=Toledo&radius=10&direccion=vue
       "conductor_id": "uuid",
       "img_perfil": "https://...",
       "valorado": false,
-      "distancia_km": 1.23
+      "distancia_km": 1.23,
+      "puntosClave": {
+        "origen": { "lat": 40.4168, "lng": -3.7038 },
+        "destino": { "lat": 40.4381, "lng": -3.6762 }
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-3.7038, 40.4168],
+          [-3.6950, 40.3920],
+          [-3.7100, 40.3500],
+          [-4.0273, 39.8628]
+        ]
+      },
+      "encodedPolyline": "_p~iF~ps|U_ulLnnqC_mqN..."
     }
   ]
 }

@@ -14,11 +14,12 @@ import { MinHeap } from "./min-heap.js";
 export class RoutingEngine {
   /**
    * Inicializa y calienta el índice espacial a partir de la base de datos.
+   * Usa Bulk Loading STR (Sort-Tile-Recursive) para rendimiento óptimo.
    * @param {object} prisma Cliente de Prisma
    */
   static async initialize(prisma) {
     console.log(
-      "[RoutingEngine] Inicializando índice espacial de trayectos...",
+      "[RoutingEngine] Inicializando índice espacial de trayectos (Bulk STR)...",
     );
     try {
       const activeTrips = await prisma.trayecto.findMany({
@@ -33,24 +34,62 @@ export class RoutingEngine {
         },
       });
 
-      globalSpatialIndex.clear();
+      const trayectosData = activeTrips
+        .map((trip) => {
+          let tramos =
+            trip.Tramos && trip.Tramos.length > 0
+              ? trip.Tramos.map((t) => ({
+                  lat: t.lat,
+                  lng: t.lng,
+                  address: t.address,
+                  step_order: t.step_order,
+                }))
+              : [];
 
-      for (const trip of activeTrips) {
-        if (trip.Tramos && trip.Tramos.length > 0) {
-          globalSpatialIndex.addTrayecto(trip.id, trip.Tramos, {
-            fecha: trip.hora ? trip.hora.toISOString().split("T")[0] : null,
-            hora: trip.hora,
-            plazas: trip.plazas,
-            disponible: trip.disponible,
-            precio: trip.precio,
-            conductor: trip.conductor,
-            evento_id: trip.evento_id,
-          });
-        }
-      }
+          // Si no tiene tramos guardados pero sí tiene origen/destino con coordenadas, crear tramo sintético
+          if (
+            tramos.length === 0 &&
+            trip.origen_lat != null &&
+            trip.origen_lng != null
+          ) {
+            tramos.push({
+              lat: trip.origen_lat,
+              lng: trip.origen_lng,
+              address: trip.origen || "",
+              step_order: 0,
+            });
+            if (trip.destino_lat != null && trip.destino_lng != null) {
+              tramos.push({
+                lat: trip.destino_lat,
+                lng: trip.destino_lng,
+                address: trip.destino || "",
+                step_order: 1,
+              });
+            }
+          }
+
+          if (tramos.length === 0) return null;
+
+          return {
+            trayectoId: trip.id,
+            tramos,
+            metadata: {
+              fecha: trip.hora ? trip.hora.toISOString().split("T")[0] : null,
+              hora: trip.hora,
+              plazas: trip.plazas,
+              disponible: trip.disponible,
+              precio: trip.precio,
+              conductor: trip.conductor,
+              evento_id: trip.evento_id,
+            },
+          };
+        })
+        .filter(Boolean);
+
+      globalSpatialIndex.loadBulk(trayectosData);
 
       console.log(
-        `[RoutingEngine] Índice espacial inicializado con ${activeTrips.length} trayectos activos.`,
+        `[RoutingEngine] Índice espacial inicializado con ${trayectosData.length} trayectos activos (${globalSpatialIndex.totalEntries} segmentos).`,
       );
     } catch (error) {
       console.error(
@@ -65,7 +104,32 @@ export class RoutingEngine {
    */
   static indexTrayecto(trayecto, tramos) {
     if (!trayecto || !trayecto.id) return;
-    globalSpatialIndex.addTrayecto(trayecto.id, tramos || [], {
+    let effectiveTramos = tramos && tramos.length > 0 ? tramos : [];
+    if (
+      effectiveTramos.length === 0 &&
+      trayecto.origen_lat != null &&
+      trayecto.origen_lng != null
+    ) {
+      effectiveTramos = [
+        {
+          lat: trayecto.origen_lat,
+          lng: trayecto.origen_lng,
+          address: trayecto.origen || "",
+          step_order: 0,
+        },
+      ];
+      if (trayecto.destino_lat != null && trayecto.destino_lng != null) {
+        effectiveTramos.push({
+          lat: trayecto.destino_lat,
+          lng: trayecto.destino_lng,
+          address: trayecto.destino || "",
+          step_order: 1,
+        });
+      }
+    }
+    if (effectiveTramos.length === 0) return;
+
+    globalSpatialIndex.addTrayecto(trayecto.id, effectiveTramos, {
       fecha: trayecto.hora
         ? new Date(trayecto.hora).toISOString().split("T")[0]
         : null,

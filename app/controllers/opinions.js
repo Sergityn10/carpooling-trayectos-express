@@ -301,18 +301,42 @@ async function getOpinionsByTravelId(req, res) {
 
 async function patchComment(req, res) {
   let { id } = req.params;
-
   id = String(id);
+  const authUserId = req.user?.userId ?? req.user?.id;
+  const userRole = req.user?.role;
 
-  console.log("Id de la opinión a actualizar:", id);
+  if (!authUserId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
+
+  const connection = await database.getConnection();
+  const [existingRows] = await connection.query(
+    `SELECT user_id_commentator FROM ${tableName} WHERE id_comment = ?`,
+    [id],
+  );
+
+  if (!existingRows || existingRows.length === 0) {
+    return res.status(404).send({
+      status: "Error",
+      message: `Opinión no encontrada o la opinión no existe con id ${id}`,
+    });
+  }
+
+  if (
+    String(existingRows[0].user_id_commentator) !== String(authUserId) &&
+    userRole !== "admin"
+  ) {
+    return res.status(403).send({
+      status: "Error",
+      message: "No tienes permiso para modificar esta opinión",
+    });
+  }
 
   const validation = ComentarioSchema.validateComentarioUpdate(req.body);
 
   if (!validation.success) {
     return res
-
       .status(400)
-
       .send({ status: "Error", message: JSON.parse(validation.error.message) });
   }
 
@@ -321,31 +345,25 @@ async function patchComment(req, res) {
   if (String(id_comment) !== String(id)) {
     return res.status(400).send({
       status: "Error",
-
       message:
         "El id de la opinión no coincide con el id de la opinión a actualizar",
     });
   }
 
-  const connection = await database.getConnection();
-
   const [result] = await connection.query(
     `UPDATE ${tableName} SET opinion = ?, rating = ? WHERE id_comment = ?`,
-
     [opinion, rating, id_comment],
   );
 
   if (result.affectedRows === 0) {
     return res.status(404).send({
       status: "Error",
-
       message: `Opinión no encontrada o la opinión no existe con id ${id_comment}`,
     });
   }
 
   let updatedOpinion = await connection.query(
     `SELECT * FROM ${tableName} WHERE id_comment = ?`,
-
     [id_comment],
   );
 
@@ -353,44 +371,64 @@ async function patchComment(req, res) {
 
   return res.status(200).send({
     status: "Success",
-
     message: "Opinión actualizada correctamente",
-
     updatedOpinion,
   });
 }
 
 async function deleteOpinion(req, res) {
   const { id } = req.params;
+  const authUserId = req.user?.userId ?? req.user?.id;
+  const userRole = req.user?.role;
+
+  if (!authUserId) {
+    return res.status(401).send({ status: "Error", message: "No autenticado" });
+  }
 
   try {
     const connection = await database.getConnection();
+    const [existingRows] = await connection.query(
+      `SELECT user_id_commentator FROM ${tableName} WHERE id_comment = ?`,
+      [id],
+    );
+
+    if (!existingRows || existingRows.length === 0) {
+      return res.status(404).send({
+        status: "Error",
+        message: `Opinión no encontrada o la opinión no existe con id ${id}`,
+      });
+    }
+
+    if (
+      String(existingRows[0].user_id_commentator) !== String(authUserId) &&
+      userRole !== "admin"
+    ) {
+      return res.status(403).send({
+        status: "Error",
+        message: "No tienes permiso para eliminar esta opinión",
+      });
+    }
 
     const [result] = await connection.query(
       `DELETE FROM ${tableName} WHERE id_comment = ?`,
-
       [id],
     );
 
     if (result.affectedRows === 0) {
       return res.status(404).send({
         status: "Error",
-
         message: `Opinión no encontrada o la opinión no existe con id ${id}`,
       });
     }
 
     return res
-
       .status(200)
-
       .send({ status: "Success", message: "Opinión eliminada correctamente" });
   } catch (error) {
     console.error("Error en deleteOpinion:", error);
 
     return res.status(500).send({
       status: "Error",
-
       message: "Error en el servidor al eliminar la opinión",
     });
   }
