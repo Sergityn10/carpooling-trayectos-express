@@ -23,6 +23,7 @@ model Trayecto {
   origen_lng    Float?
   destino_lat   Float?
   destino_lng   Float?
+  overview_polyline String? @db.MediumText
   notified_15min Int     @default(0)
   evento_id     String?  @db.VarChar(36)
   created_at    DateTime @default(now())

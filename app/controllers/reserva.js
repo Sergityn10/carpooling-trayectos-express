@@ -18,9 +18,9 @@ import Stripe from "stripe";
 dotenv.config();
 const USUARIOS_URL = process.env.USUARIOS_URL;
 const MESSAGES_URL = process.env.MESSAGES_URL;
-let frontend_url = process.env.FRONTEND_URL;
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY)
+  : null;
 
 const PLATFORM_COMMISSION_PERCENT = parseFloat(
   process.env.PLATFORM_COMMISSION_PERCENT || "0.15",
@@ -1158,6 +1158,9 @@ async function capturarPagosTrayecto(trayectoId) {
         continue;
       }
 
+      if (!stripe) {
+        throw new Error("STRIPE_SECRET_KEY no está configurado en el servidor");
+      }
       const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
 
       if (pi.status === "requires_capture") {

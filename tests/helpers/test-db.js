@@ -1,5 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+import pkg from "@prisma/client";
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
+
+const { PrismaClient } = pkg;
 
 let prismaClient = null;
 

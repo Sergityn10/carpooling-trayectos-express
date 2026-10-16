@@ -130,12 +130,57 @@ function encodeValue(value) {
   let encoded = "";
   
   while (val >= 0x20) {
-    encoded += String.fromCharCode((val & 0x1f) + 63);
+    encoded += String.fromCharCode((0x20 | (val & 0x1f)) + 63);
     val >>= 5;
   }
   encoded += String.fromCharCode(val + 63);
   
   return encoded;
+}
+
+/**
+ * Decodifica una polilínea codificada en formato Google Polyline Algorithm.
+ * Devuelve un array de coordenadas [lng, lat] (formato estándar interno).
+ * @param {string} encoded - String codificado
+ * @returns {Array<Array<number>>} Array de coordenadas [lng, lat]
+ */
+function decodePolyline(encoded) {
+  if (!encoded || typeof encoded !== "string") return [];
+  const coordinates = [];
+  let index = 0;
+  const len = encoded.length;
+  let lat = 0;
+  let lng = 0;
+
+  while (index < len) {
+    let b;
+    let shift = 0;
+    let result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    const dlat = result & 1 ? ~(result >> 1) : result >> 1;
+    lat += dlat;
+
+    shift = 0;
+    result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    const dlng = result & 1 ? ~(result >> 1) : result >> 1;
+    lng += dlng;
+
+    coordinates.push([
+      Math.round(lng) * 1e-5,
+      Math.round(lat) * 1e-5,
+    ]);
+  }
+
+  return coordinates;
 }
 
 /**
@@ -269,20 +314,83 @@ function formatRoute(tramos, options = {}) {
       destino: { lat: tramos[tramos.length - 1]?.lat, lng: tramos[tramos.length - 1]?.lng }
     },
     encodedPolyline: encodedPolyline,
-    geometry: (format === "geojson" || format === "both") && coordinates.length >= 2
-      ? { type: "LineString", coordinates: coordinates }
-      : null
+    geometry:
+      (format === "geojson" || format === "both") && coordinates.length >= 2
+        ? { type: "LineString", coordinates: coordinates }
+        : null,
   };
+}
+
+/**
+ * Resuelve la polilínea codificada de un trayecto de forma óptima:
+ * 1. Si el trayecto ya tiene `overview_polyline` guardado en BD, lo retorna en O(1) sin JOINs.
+ * 2. Si no, usa `formatRoute` sobre `trayecto.Tramos` o `fallbackCoords`.
+ *
+ * @param {Object} trayecto - Objeto trayecto de la base de datos
+ * @param {Object} options - Opciones de formato (zoom, format, precision)
+ * @returns {Object} { encodedPolyline, geometry, keyPoints }
+ */
+function resolvePolyline(trayecto, options = {}) {
+  if (!trayecto) {
+    return {
+      encodedPolyline: null,
+      geometry: null,
+      keyPoints: { origen: null, destino: null, paradas: [] },
+    };
+  }
+
+  if (
+    trayecto.overview_polyline &&
+    typeof trayecto.overview_polyline === "string" &&
+    trayecto.overview_polyline.trim().length > 0
+  ) {
+    const keyPoints = {
+      origen:
+        trayecto.origen_lat != null && trayecto.origen_lng != null
+          ? { lat: trayecto.origen_lat, lng: trayecto.origen_lng }
+          : null,
+      destino:
+        trayecto.destino_lat != null && trayecto.destino_lng != null
+          ? { lat: trayecto.destino_lat, lng: trayecto.destino_lng }
+          : null,
+      paradas: [],
+    };
+
+    let geometry = null;
+    if (options.format === "geojson" || options.format === "both") {
+      const coords = decodePolyline(trayecto.overview_polyline);
+      if (coords.length >= 2) {
+        geometry = { type: "LineString", coordinates: coords };
+      }
+    }
+
+    return {
+      encodedPolyline: trayecto.overview_polyline,
+      geometry,
+      keyPoints,
+    };
+  }
+
+  return formatRoute(trayecto.Tramos || [], {
+    ...options,
+    fallbackCoords: options.fallbackCoords || {
+      origen_lat: trayecto.origen_lat,
+      origen_lng: trayecto.origen_lng,
+      destino_lat: trayecto.destino_lat,
+      destino_lng: trayecto.destino_lng,
+    },
+  });
 }
 
 export const RouteGeometryService = {
   simplifyCoordinates,
   encodePolyline,
+  decodePolyline,
   extractKeyPoints,
   formatRoute,
+  resolvePolyline,
   getEpsilonByZoom,
   encodeValue,
   perpendicularDistance,
   rdpSimplify,
-  simplifyCoordinates
 };

@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { RouteGeometryService } from "../services/routing/geometry-service.js";
 dotenv.config();
 // Asegúrate de que esta URL base esté disponible (debe ser importada o definida)
 const GEOCODE_URL =
@@ -159,13 +160,21 @@ async function getDirections(origin, destination, routeIndex = 0) {
   const data = await response.json();
 
   if (data.status !== "OK" || !data.routes || data.routes.length === 0) {
-    console.warn(`[getDirections] No route found: ${data.status}`);
-    return { steps: [], distanceKm: null, durationSec: null };
+    console.warn(
+      `[getDirections] Error de Google Directions API: ${data.status}${data.error_message ? ` - ${data.error_message}` : ""}`,
+    );
+    return {
+      steps: [],
+      overviewPolyline: null,
+      distanceKm: null,
+      durationSec: null,
+    };
   }
 
   const route =
     data.routes[Math.min(routeIndex, data.routes.length - 1)] ?? data.routes[0];
 
+  const overviewPolyline = route.overview_polyline?.points || null;
   const steps = [];
   let distanceMeters = 0;
   let durationSec = 0;
@@ -183,8 +192,34 @@ async function getDirections(origin, destination, routeIndex = 0) {
     }
   }
 
+  // Si Google Directions devuelve la polilínea completa (overview_polyline),
+  // decodificamos los puntos reales para que la ruta siga fielmente las curvas de la carretera
+  let detailedSteps = [];
+  if (overviewPolyline) {
+    try {
+      const roadCoords = RouteGeometryService.decodePolyline(overviewPolyline);
+      if (roadCoords && roadCoords.length > 0) {
+        // Simplificar suavemente a nivel calle/carretera (~20m) para preservar todas las curvas sin saturar la BD
+        const simplified = RouteGeometryService.simplifyCoordinates(roadCoords, 14);
+        detailedSteps = simplified.map((coord, index) => {
+          let address = "";
+          if (index === 0) address = "Origen";
+          else if (index === simplified.length - 1) address = "Destino";
+          return {
+            lat: coord[1],
+            lng: coord[0],
+            address,
+          };
+        });
+      }
+    } catch (err) {
+      console.warn("[getDirections] Error decodificando overview_polyline:", err?.message ?? err);
+    }
+  }
+
   return {
-    steps,
+    steps: detailedSteps.length > 0 ? detailedSteps : steps,
+    overviewPolyline,
     distanceKm: distanceMeters > 0 ? distanceMeters / 1000 : null,
     durationSec: durationSec > 0 ? durationSec : null,
   };

@@ -1,12 +1,11 @@
 import { describe, it, before, after } from "node:test";
 import { strict as assert } from "node:assert";
-import { PrismaClient } from "@prisma/client";
 import express from "express";
+import { database as prisma } from "../../app/database.js";
 import { TrayectosController } from "../../app/controllers/trayectos.js";
 import { utilsAuthentication } from "../../app/utils/authentication.js";
 import { globalSpatialIndex, RoutingEngine } from "../../app/services/routing/routing-engine.js";
 
-const prisma = new PrismaClient();
 let app;
 let server;
 let baseUrl;

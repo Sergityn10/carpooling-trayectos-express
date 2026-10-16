@@ -349,17 +349,11 @@ async function obtenerTrayectosEnViewport(req, res) {
     const data = trayectos.map((t) => {
       const tramos = t.Tramos || [];
 
-      // Usar RouteGeometryService para formatear la ruta (con encodedPolyline por defecto y fallback)
-      const route = RouteGeometryService.formatRoute(t.Tramos || [], {
+      // Usar RouteGeometryService para resolver la ruta (O(1) si tiene overview_polyline, fallback si no)
+      const route = RouteGeometryService.resolvePolyline(t, {
         zoom,
         precision,
         format: "both", // Devolver tanto encodedPolyline como geometry si se pide
-        fallbackCoords: {
-          origen_lat: t.origen_lat,
-          origen_lng: t.origen_lng,
-          destino_lat: t.destino_lat,
-          destino_lng: t.destino_lng,
-        },
       });
 
       const driver = driverMap.get(t.conductor) || {};
@@ -577,6 +571,7 @@ async function crearTrayecto(req, res) {
   // Calcular ruta real (Directions API) para obtener distancia y tramos
   let routeSteps = [];
   let routeDistanceKm = null;
+  let overviewPolyline = null;
   try {
     const originCoord = `${originDetails.lat},${originDetails.lng}`;
     const destCoord = `${destinationDetails.lat},${destinationDetails.lng}`;
@@ -587,17 +582,28 @@ async function crearTrayecto(req, res) {
     );
     routeSteps = route.steps;
     routeDistanceKm = route.distanceKm;
+    overviewPolyline = route.overviewPolyline || null;
     console.log(
       "[crearTrayecto] Ruta Directions:",
       routeSteps.length,
       "tramos | distancia real:",
       routeDistanceKm != null ? `${routeDistanceKm.toFixed(2)} km` : "N/A",
+      "| overviewPolyline:",
+      overviewPolyline ? `${overviewPolyline.length} chars` : "null",
     );
   } catch (e) {
     console.error(
       "[crearTrayecto] Error al obtener ruta de Directions:",
       e?.message ?? e,
     );
+  }
+
+  // Fallback para overviewPolyline si Directions falló pero tenemos coordenadas de origen y destino
+  if (!overviewPolyline && originDetails && destinationDetails) {
+    overviewPolyline = RouteGeometryService.encodePolyline([
+      [originDetails.lng, originDetails.lat],
+      [destinationDetails.lng, destinationDetails.lat],
+    ]);
   }
 
   if (precio === 0) {
@@ -711,6 +717,7 @@ async function crearTrayecto(req, res) {
         origen_lng: originDetails.lng,
         destino_lat: destinationDetails.lat,
         destino_lng: destinationDetails.lng,
+        overview_polyline: overviewPolyline,
         routeIndex,
         evento_id: evento_id ?? null,
       },
@@ -1377,8 +1384,8 @@ async function obtenerProximosTrayectos(req, res) {
 
       const tramos = t.Tramos ?? [];
 
-      // Usar RouteGeometryService para formatear la ruta (ahora con encodedPolyline por defecto)
-      const route = RouteGeometryService.formatRoute(t.Tramos || [], {
+      // Usar RouteGeometryService para resolver la ruta (O(1) si tiene overview_polyline, fallback si no)
+      const route = RouteGeometryService.resolvePolyline(t, {
         zoom,
         precision: "simplified",
         format: "both", // Devolver tanto encodedPolyline como geometry
@@ -2185,17 +2192,11 @@ async function buscarTrayectos(req, res) {
       const driverInfo = usersMap.get(String(t.conductor));
       const tramos = t.Tramos ?? [];
 
-      // Usar RouteGeometryService para formatear la ruta (con encodedPolyline por defecto y fallback)
-      const route = RouteGeometryService.formatRoute(t.Tramos || [], {
+      // Usar RouteGeometryService para resolver la ruta (O(1) si tiene overview_polyline, fallback si no)
+      const route = RouteGeometryService.resolvePolyline(t, {
         zoom: 12,
         precision: "simplified",
         format: "both", // Devolver tanto encodedPolyline como geometry
-        fallbackCoords: {
-          origen_lat: t.origen_lat,
-          origen_lng: t.origen_lng,
-          destino_lat: t.destino_lat,
-          destino_lng: t.destino_lng,
-        },
       });
 
       const conductorNombre = driverInfo?.name || "Desconocido";
@@ -2447,7 +2448,7 @@ async function obtenerTrayectoCompleto(req, res) {
       rating: c.rating,
       created_at: c.created_at,
     })),
-    route: RouteGeometryService.formatRoute(trayecto.Tramos || [], {
+    route: RouteGeometryService.resolvePolyline(trayecto, {
       zoom: 15,
       precision: "full",
       format: "both", // Devolver tanto encodedPolyline como geometry
@@ -2779,8 +2780,8 @@ async function buscarTrayectosPorEvento(req, res) {
       const conductorInfo = usersMap.get(String(t.conductor));
       const tramos = t.Tramos ?? [];
 
-      // Usar RouteGeometryService para formatear la ruta
-      const route = RouteGeometryService.formatRoute(t.Tramos || [], {
+      // Usar RouteGeometryService para resolver la ruta (O(1) si tiene overview_polyline, fallback si no)
+      const route = RouteGeometryService.resolvePolyline(t, {
         zoom: 14,
         precision: "simplified",
         format: "both", // Devolver tanto encodedPolyline como geometry

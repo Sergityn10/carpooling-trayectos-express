@@ -4,14 +4,16 @@ import { database } from "../database.js";
 
 dotenv.config();
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY)
+  : null;
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 async function stripeWebhook(req, res) {
-  if (!stripeWebhookSecret) {
+  if (!stripe || !stripeWebhookSecret) {
     return res.status(500).send({
       status: "Error",
-      message: "STRIPE_WEBHOOK_SECRET no configurado",
+      message: "Stripe o STRIPE_WEBHOOK_SECRET no configurado",
     });
   }
 

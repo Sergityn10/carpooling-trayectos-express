@@ -83,6 +83,25 @@ describe("RouteGeometryService - Servicio de Geometría de Rutas", () => {
     });
   });
 
+  describe("decodePolyline - Decodificación de Polilínea de Google", () => {
+    it("debe decodificar polilínea y recuperar coordenadas [lng, lat]", () => {
+      const original = [[-3.7038, 40.4168], [-4.0273, 39.8628]];
+      const encoded = RouteGeometryService.encodePolyline(original);
+      const decoded = RouteGeometryService.decodePolyline(encoded);
+
+      assert.equal(decoded.length, 2);
+      assert.ok(Math.abs(decoded[0][0] - original[0][0]) < 0.0001);
+      assert.ok(Math.abs(decoded[0][1] - original[0][1]) < 0.0001);
+      assert.ok(Math.abs(decoded[1][0] - original[1][0]) < 0.0001);
+      assert.ok(Math.abs(decoded[1][1] - original[1][1]) < 0.0001);
+    });
+
+    it("debe manejar string vacío o nulo", () => {
+      assert.deepEqual(RouteGeometryService.decodePolyline(""), []);
+      assert.deepEqual(RouteGeometryService.decodePolyline(null), []);
+    });
+  });
+
   describe("simplifyCoordinates - Simplificación por Zoom", () => {
     it("debe simplificar más en zoom bajo", () => {
       const coords = [];

@@ -11,7 +11,8 @@
     "test:all": "node --test tests/unit/**/*.test.js tests/integration/**/*.test.js",
     "test:docker": "docker compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from test-runner && docker compose -f docker-compose.test.yml down -v",
     "benchmark": "node scripts/benchmark-viewport.js",
-    "dev": "nodemon --exec node app/index.js"
+    "dev": "nodemon --exec node app/index.js",
+    "prisma:generate": "prisma generate"
   },
   "author": "",
   "license": "ISC",
