@@ -195,6 +195,7 @@ async function addReserva(req, res) {
 
   const { trayecto_id, user_id } = validation.data;
   const { return_url } = req.body;
+  const frontend_url = process.env.FRONTEND_URL;
   const userId = req.user.userId;
   console.log(
     "[addReserva] trayecto_id:",
