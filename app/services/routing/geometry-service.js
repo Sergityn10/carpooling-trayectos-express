@@ -249,7 +249,7 @@ function formatRoute(tramos, options = {}) {
         },
         encodedPolyline: encoded,
         geometry:
-          format === "geojson" || format === "both"
+          precision !== "bounds" && (format === "geojson" || format === "both")
             ? { type: "LineString", coordinates: coords }
             : null,
       };
@@ -315,7 +315,7 @@ function formatRoute(tramos, options = {}) {
     },
     encodedPolyline: encodedPolyline,
     geometry:
-      (format === "geojson" || format === "both") && coordinates.length >= 2
+      precision !== "bounds" && (format === "geojson" || format === "both") && coordinates.length >= 2
         ? { type: "LineString", coordinates: coordinates }
         : null,
   };
@@ -357,7 +357,10 @@ function resolvePolyline(trayecto, options = {}) {
     };
 
     let geometry = null;
-    if (options.format === "geojson" || options.format === "both") {
+    if (
+      options.precision !== "bounds" &&
+      (options.format === "geojson" || options.format === "both")
+    ) {
       const coords = decodePolyline(trayecto.overview_polyline);
       if (coords.length >= 2) {
         geometry = { type: "LineString", coordinates: coords };

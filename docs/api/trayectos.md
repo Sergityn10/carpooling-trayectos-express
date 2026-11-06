@@ -85,6 +85,9 @@ GET /api/trayecto/viewport
 
 **Descripción:** Devuelve los trayectos activos que intersectan el bounding box visible del mapa. Diseñado para exploración interactiva estilo Airbnb/Uber: el frontend envía los límites de la pantalla (`minLat`, `maxLat`, `minLng`, `maxLng`) y el nivel de zoom, y el backend filtra mediante índice espacial R-Tree en memoria para latencia < 100ms.
 
+> **Exclusión automática de viajes propios:**
+> Si la petición se realiza con sesión iniciada (`tryAuthenticate`), el backend excluye automáticamente los trayectos creados por el usuario conectado (`conductor !== req.user.id`).
+
 **Query params:**
 
 | Parámetro | Tipo | Requerido | Por defecto | Descripción |
@@ -94,8 +97,12 @@ GET /api/trayecto/viewport
 | `maxLat`  | Float | **Sí** | - | Latitud noreste (límite superior) [-90, 90] |
 | `maxLng`  | Float | **Sí** | - | Longitud noreste (límite derecho) [-180, 180] |
 | `zoom`    | Int   | No | `12` | Nivel de zoom del mapa (1-22) |
-| `fecha`   | String (YYYY-MM-DD) | No | `null` | Filtrar trayectos a partir de una fecha |
-| `plazas`  | Int   | No | `1` | Plazas mínimas disponibles requeridas (1-8) |
+| `fecha` / `date` | String (YYYY-MM-DD) | No | `null` | Filtrar trayectos por fecha o fecha inicial |
+| `fechaFin` | String (YYYY-MM-DD) | No | `null` | Fecha fin para rangos (ej. fin de semana completo) |
+| `plazas` / `minSeats` | Int   | No | `1` | Plazas mínimas disponibles requeridas (1-8) |
+| `maxPrice` / `precioMax` | Float | No | `null` | Precio máximo por plaza |
+| `eventoId` | UUID | No | `null` | Filtrar por trayectos vinculados a un evento específico |
+| `hasEvent` | Boolean | No | `null` | Si es true, filtra únicamente trayectos con evento asociado |
 | `precision` | Enum (`full` \| `simplified` \| `bounds`) | No | `simplified` | Nivel de detalle de la geometría |
 | `limit`   | Int   | No | `50` | Máximo de trayectos a devolver (1-100) |
 
@@ -486,13 +493,17 @@ GET /api/trayecto/:id
 
 ---
 
-### Obtener trayecto completo
+### Obtener trayecto completo (Dominio Puro de Trayectos)
 
 ```
 GET /api/trayecto/:id/completo
 ```
 
 **Auth:** Opcional
+
+> **Separación de Responsabilidades (Microservicios):**
+> Este endpoint devuelve exclusivamente los datos pertenecientes al **dominio de trayectos** (itinerario, tramos, geometría, encodedPolyline, eventos de viaje, comentarios y reservas asociadas).
+> **No enriquece datos de usuarios**: `conductor` y `conductor_id` devuelven el UUID del conductor; la lista `pasajeros` devuelve las reservas (`id_reserva`, `user_id`, `status`, `trip_outcome`). Los nombres, avatares y preferencias deben solicitarse al Microservicio de Usuarios utilizando los `user_id` correspondientes.
 
 **Query params:**
 
@@ -505,19 +516,62 @@ GET /api/trayecto/:id/completo
 
 ```json
 {
-  "id": "uuid",
+  "id": "c1f7a29e-862d-4235-a149-14a938c5df72",
   "origen": "Madrid",
   "destino": "Toledo",
+  "fecha": "2026-10-07",
   "hora": "2026-10-07T08:30:00.000Z",
   "precio": 4.50,
-  "plazasTotales": 4,
-  "plazasDisponibles": 2,
-  "conductor": {
-    "id": "usr_998124",
-    "nombre": "Carlos R.",
-    "avatar": "https://...",
-    "rating": 4.8
-  },
+  "plazas": 4,
+  "disponible": 2,
+  "conductor": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "conductor_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "vehiculo_id": "veh_445566",
+  "evento_id": null,
+  "origen_lat": 40.4065,
+  "origen_lng": -3.6901,
+  "destino_lat": 39.8628,
+  "destino_lng": -4.0273,
+  "status": "programado",
+  "valorado": false,
+  "pasajeros": [
+    {
+      "id_reserva": "res_887766",
+      "user_id": "b2c3d4e5-f6a7-8901-bcde-fa2345678901",
+      "status": "confirmed",
+      "trip_outcome": "pending",
+      "created_at": "2026-10-06T19:00:00.000Z"
+    }
+  ],
+  "eventos": [
+    {
+      "id": "evt_112233",
+      "tipo_evento": "comienzo",
+      "id_reserva": null,
+      "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "lat": 40.4065,
+      "lng": -3.6901,
+      "created_at": "2026-10-07T08:30:00.000Z"
+    }
+  ],
+  "comentarios": [
+    {
+      "id_comment": "com_9988",
+      "user_id_commentator": "b2c3d4e5-f6a7-8901-bcde-fa2345678901",
+      "user_id_trayect": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "opinion": "Buen viaje",
+      "rating": 5,
+      "created_at": "2026-10-07T11:00:00.000Z"
+    }
+  ],
+  "Tramos": [
+    {
+      "step_order": 0,
+      "lat": 40.4065,
+      "lng": -3.6901,
+      "address": "Calle Atocha, Madrid"
+    }
+  ],
   "puntosClave": {
     "origen": { "lat": 40.4065, "lng": -3.6901 },
     "destino": { "lat": 39.8628, "lng": -4.0273 }
@@ -531,13 +585,8 @@ GET /api/trayecto/:id/completo
       [-4.0273, 39.8628]
     ]
   },
-  "encodedPolyline": "_p~iF~ps|U_ulLnnqC_mqN...",
-  "driverPreferences": {},
-  "pasajeros": [...],
-  "eventos": [...],
-  "comentarios": [...]
-}
-```
+  "encodedPolyline": "_p~iF~ps|U_ulLnnqC_mqN..."
+}```
 
 ---
 

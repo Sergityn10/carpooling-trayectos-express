@@ -1,7 +1,8 @@
 import { describe, it, before, after } from "node:test";
 import { strict as assert } from "node:assert";
+import crypto from "node:crypto";
 import express from "express";
-import { database as prisma } from "../../app/database.js";
+import { prisma } from "../../app/database.js";
 import { TrayectosController } from "../../app/controllers/trayectos.js";
 import { utilsAuthentication } from "../../app/utils/authentication.js";
 import { globalSpatialIndex, RoutingEngine } from "../../app/services/routing/routing-engine.js";
@@ -33,8 +34,8 @@ function createTestApp() {
 
 async function createTestTrayecto(data) {
   const tramos = data.tramos || [
-    { lat: data.origen_lat, lng: data.origen_lng, address: data.origen, step_order: 0 },
-    { lat: data.destino_lat, lng: data.destino_lng, address: data.destino, step_order: 1 },
+    { id: crypto.randomUUID(), lat: data.origen_lat, lng: data.origen_lng, address: data.origen, step_order: 0 },
+    { id: crypto.randomUUID(), lat: data.destino_lat, lng: data.destino_lng, address: data.destino, step_order: 1 },
   ];
 
   const trayecto = await prisma.trayecto.create({
@@ -53,11 +54,12 @@ async function createTestTrayecto(data) {
       destino_lng: data.destino_lng,
       status: data.status || "programado",
       Tramos: {
-        create: tramos.map(t => ({
+        create: tramos.map((t, idx) => ({
+          id: t.id || crypto.randomUUID(),
           lat: t.lat,
           lng: t.lng,
           address: t.address,
-          step_order: t.step_order,
+          step_order: t.step_order !== undefined ? t.step_order : idx,
         })),
       },
     },
@@ -87,9 +89,19 @@ describe("Integration - GET /api/trayecto/viewport", () => {
   });
 
   after(async () => {
-    await cleanupTestData();
-    await prisma.$disconnect();
-    server.close();
+    try {
+      await cleanupTestData();
+    } catch (e) {
+      console.error("cleanupTestData error:", e);
+    }
+    try {
+      await prisma.$disconnect();
+    } catch (e) {
+      console.error("prisma.$disconnect error:", e);
+    }
+    if (server) {
+      server.close();
+    }
   });
 
   describe("Filtrado por Estados de Trayecto", () => {

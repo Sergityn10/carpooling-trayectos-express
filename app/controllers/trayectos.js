@@ -223,10 +223,28 @@ async function obtenerTrayectosEnViewport(req, res) {
       maxLng,
       zoom,
       fecha,
+      date,
+      fechaFin,
       plazas,
+      minSeats,
+      maxPrice,
+      precioMax,
+      eventoId,
+      hasEvent,
       precision,
       limit,
     } = validation.data;
+
+    const targetFecha = fecha || date;
+    const targetPlazas = plazas ?? minSeats ?? 1;
+    const targetMaxPrice = maxPrice ?? precioMax;
+    const targetEventoId = eventoId;
+    const targetHasEvent = hasEvent;
+    const currentUserId =
+      req.user?.id ||
+      req.user?.userId ||
+      req.query?.userId ||
+      req.headers?.["x-user-id"];
 
     const { globalSpatialIndex } =
       await import("../services/routing/spatial-index.js");
@@ -241,7 +259,7 @@ async function obtenerTrayectosEnViewport(req, res) {
       // Fallback a Base de Datos: buscar trayectos cuyos puntos de origen o destino estén dentro del bounding box
       const bboxWhere = {
         status: { in: ["programado", "en curso"] },
-        disponible: { gte: plazas },
+        disponible: { gte: targetPlazas },
         OR: [
           {
             origen_lat: { gte: minLat, lte: maxLat },
@@ -253,9 +271,21 @@ async function obtenerTrayectosEnViewport(req, res) {
           },
         ],
       };
-      if (fecha) {
-        const startOfDay = new Date(`${fecha}T00:00:00.000Z`);
-        const endOfDay = new Date(`${fecha}T23:59:59.999Z`);
+      if (currentUserId) {
+        bboxWhere.conductor = { not: String(currentUserId) };
+      }
+      if (targetMaxPrice != null) {
+        bboxWhere.precio = { lte: targetMaxPrice };
+      }
+      if (targetEventoId) {
+        bboxWhere.evento_id = targetEventoId;
+      } else if (targetHasEvent) {
+        bboxWhere.evento_id = { not: null };
+      }
+      if (targetFecha) {
+        const startOfDay = new Date(`${targetFecha}T00:00:00.000Z`);
+        const endDayStr = fechaFin || targetFecha;
+        const endOfDay = new Date(`${endDayStr}T23:59:59.999Z`);
         bboxWhere.hora = { gte: startOfDay, lte: endOfDay };
       }
       const dbFallback = await prisma.trayecto.findMany({
@@ -280,16 +310,28 @@ async function obtenerTrayectosEnViewport(req, res) {
     const where = {
       id: { in: trayectoIds },
       status: { in: ["programado", "en curso"] },
-      disponible: { gte: plazas },
+      disponible: { gte: targetPlazas },
     };
+    if (currentUserId) {
+      where.conductor = { not: String(currentUserId) };
+    }
 
-    if (fecha) {
-      const startOfDay = new Date(`${fecha}T00:00:00.000Z`);
-      const endOfDay = new Date(`${fecha}T23:59:59.999Z`);
+    if (targetMaxPrice != null) {
+      where.precio = { lte: targetMaxPrice };
+    }
+    if (targetEventoId) {
+      where.evento_id = targetEventoId;
+    } else if (targetHasEvent) {
+      where.evento_id = { not: null };
+    }
+    if (targetFecha) {
+      const startOfDay = new Date(`${targetFecha}T00:00:00.000Z`);
+      const endDayStr = fechaFin || targetFecha;
+      const endOfDay = new Date(`${endDayStr}T23:59:59.999Z`);
       where.hora = { gte: startOfDay, lte: endOfDay };
     }
 
-    const trayectos = await prisma.trayecto.findMany({
+    let trayectos = await prisma.trayecto.findMany({
       where,
       take: limit,
       include: {
@@ -300,6 +342,12 @@ async function obtenerTrayectosEnViewport(req, res) {
       },
       orderBy: { hora: "asc" },
     });
+
+    if (currentUserId) {
+      trayectos = trayectos.filter(
+        (t) => String(t.conductor).toLowerCase() !== String(currentUserId).toLowerCase(),
+      );
+    }
 
     if (!trayectos || trayectos.length === 0) {
       return res.status(200).send({
@@ -382,7 +430,6 @@ async function obtenerTrayectosEnViewport(req, res) {
         driverPreferences: preferencesByDriver[t.conductor] || {},
       };
     });
-    console.log(data);
     return res.status(200).send({
       status: "Success",
       data,
@@ -960,10 +1007,28 @@ function convertirFechaHoraUTC(fecha, hora) {
 }
 
 async function obtenerTrayectos(req, res) {
-  const rows = await prisma.trayecto.findMany({
-    where: { status: { notIn: TRAYECTO_INACTIVE_STATUSES } },
+  const currentUserId =
+    req.user?.id ||
+    req.user?.userId ||
+    req.query?.userId ||
+    req.headers?.["x-user-id"];
+
+  const where = { status: { notIn: TRAYECTO_INACTIVE_STATUSES } };
+  if (currentUserId) {
+    where.conductor = { not: String(currentUserId) };
+  }
+
+  let rows = await prisma.trayecto.findMany({
+    where,
   });
-  const userId = req.user?.id;
+
+  if (currentUserId) {
+    rows = rows.filter(
+      (t) => String(t.conductor).toLowerCase() !== String(currentUserId).toLowerCase(),
+    );
+  }
+
+  const userId = currentUserId;
 
   // Obtener detalles de conductores (nombre e imagen) desde el microservicio de usuarios
   const conductorIds = [...new Set(rows.map((t) => t.conductor))];
@@ -1932,6 +1997,11 @@ async function eliminarTrayecto(req, res) {
 
 async function buscarTrayectos(req, res) {
   try {
+    const currentUserId =
+      req.user?.id ||
+      req.user?.userId ||
+      req.query?.userId ||
+      req.headers?.["x-user-id"];
     const page = Math.max(parseInt(req.query.page ?? "1", 10), 1);
     const limit = Math.min(
       Math.max(parseInt(req.query.limit ?? "10", 10), 1),
@@ -2030,15 +2100,19 @@ async function buscarTrayectos(req, res) {
 
     if (candidateTrayectoIds.size === 0) {
       // Fallback a Base de Datos: buscar trayectos activos con fecha y capacidad compatibles
-      const dbCandidates = await prisma.trayecto.findMany({
-        where: {
-          disponible: { gte: seats },
-          status: { in: ["programado", "en curso"] },
-          hora: {
-            gte: new Date(`${fecha}T00:00:00.000Z`),
-            lte: new Date(`${fecha}T23:59:59.999Z`),
-          },
+      const dbCandidatesWhere = {
+        disponible: { gte: seats },
+        status: { in: ["programado", "en curso"] },
+        hora: {
+          gte: new Date(`${fecha}T00:00:00.000Z`),
+          lte: new Date(`${fecha}T23:59:59.999Z`),
         },
+      };
+      if (currentUserId) {
+        dbCandidatesWhere.conductor = { not: String(currentUserId) };
+      }
+      const dbCandidates = await prisma.trayecto.findMany({
+        where: dbCandidatesWhere,
         include: {
           Tramos: {
             orderBy: { step_order: "asc" },
@@ -2121,16 +2195,21 @@ async function buscarTrayectos(req, res) {
     const candidateIds = Array.from(candidateTrayectoIds);
 
     // Obtener trayectos candidatos de la BD
-    const candidateTrayectos = await prisma.trayecto.findMany({
-      where: {
-        id: { in: candidateIds },
-        disponible: { gte: seats },
-        status: { in: ["programado", "en curso"] },
-        hora: {
-          gte: new Date(`${fecha}T00:00:00.000Z`),
-          lte: new Date(`${fecha}T23:59:59.999Z`),
-        },
+    const candidateWhere = {
+      id: { in: candidateIds },
+      disponible: { gte: seats },
+      status: { in: ["programado", "en curso"] },
+      hora: {
+        gte: new Date(`${fecha}T00:00:00.000Z`),
+        lte: new Date(`${fecha}T23:59:59.999Z`),
       },
+    };
+    if (currentUserId) {
+      candidateWhere.conductor = { not: String(currentUserId) };
+    }
+
+    let candidateTrayectos = await prisma.trayecto.findMany({
+      where: candidateWhere,
       include: {
         Tramos: {
           orderBy: { step_order: "asc" },
@@ -2138,6 +2217,12 @@ async function buscarTrayectos(req, res) {
         },
       },
     });
+
+    if (currentUserId) {
+      candidateTrayectos = candidateTrayectos.filter(
+        (t) => String(t.conductor).toLowerCase() !== String(currentUserId).toLowerCase(),
+      );
+    }
 
     if (candidateTrayectos.length === 0) {
       return res.status(200).json({
@@ -2328,6 +2413,11 @@ async function obtenerTrayectoCompleto(req, res) {
 
   const trayecto = await prisma.trayecto.findUnique({
     where: { id },
+    include: {
+      Tramos: {
+        orderBy: { step_order: "asc" },
+      },
+    },
   });
 
   if (!trayecto) {
@@ -2336,68 +2426,19 @@ async function obtenerTrayectoCompleto(req, res) {
       .send({ status: "Error", message: "Trayecto no encontrado" });
   }
 
-  // --- Conductor info ---
-  const conductorInfo = await UsersAPI.fetchUserPublicInfo(
-    String(trayecto.conductor),
-  );
-  const conductorName = conductorInfo?.name || "Desconocido";
-  const imgPerfil = conductorInfo?.img_perfil;
-
-  // --- Driver preferences ---
-  const driverPrefsRaw = await prisma.userPreference.findMany({
-    where: {
-      user_id: trayecto.conductor,
-      PreferenceDefinition: { is_active: 1 },
-    },
-    include: {
-      PreferenceDefinition: { select: { pref_key: true, value_type: true } },
-    },
-  });
-  const driverPreferences = {};
-  for (const p of driverPrefsRaw) {
-    driverPreferences[p.PreferenceDefinition.pref_key] = parsePreferenceValue(
-      p.PreferenceDefinition.value_type,
-      p.value,
-    );
-  }
-
-  // --- Passengers (reservas no canceladas) ---
+  // --- Pasajeros / Reservas del trayecto ---
+  // Únicamente información de reservas/pasajeros del dominio de trayectos (IDs y estados)
   const reservas = await prisma.reserva.findMany({
     where: { id_trayecto: id, NOT: { status: "canceled" } },
+    select: {
+      id_reserva: true,
+      user_id: true,
+      status: true,
+      trip_outcome: true,
+      created_at: true,
+    },
+    orderBy: { created_at: "asc" },
   });
-
-  const pasajeros = await Promise.all(
-    reservas.map(async (r) => {
-      const userInfo = await UsersAPI.fetchUserPublicInfo(String(r.user_id));
-      const prefsRaw = await prisma.userPreference.findMany({
-        where: {
-          user_id: r.user_id,
-          PreferenceDefinition: { is_active: 1 },
-        },
-        include: {
-          PreferenceDefinition: {
-            select: { pref_key: true, value_type: true },
-          },
-        },
-      });
-      const preferences = {};
-      for (const p of prefsRaw) {
-        preferences[p.PreferenceDefinition.pref_key] = parsePreferenceValue(
-          p.PreferenceDefinition.value_type,
-          p.value,
-        );
-      }
-      return {
-        id_reserva: r.id_reserva,
-        user_id: r.user_id,
-        status: r.status,
-        trip_outcome: r.trip_outcome,
-        nombre: userInfo?.name || "Desconocido",
-        img_perfil: userInfo?.img_perfil || null,
-        preferences,
-      };
-    }),
-  );
 
   // --- Eventos del trayecto ---
   const eventos = await prisma.eventoTrayecto.findMany({
@@ -2408,7 +2449,7 @@ async function obtenerTrayectoCompleto(req, res) {
     orderBy: { created_at: "asc" },
   });
 
-  // --- Comentarios ---
+  // --- Comentarios del trayecto ---
   const comentarios = await prisma.comment.findMany({
     where: { id_trayecto: id },
     orderBy: { created_at: "desc" },
@@ -2421,16 +2462,26 @@ async function obtenerTrayectoCompleto(req, res) {
   const fechaHora = new Date(trayecto.hora).toISOString();
   const fecha = fechaHora.split("T")[0];
 
+  const route = RouteGeometryService.resolvePolyline(trayecto, {
+    zoom: 15,
+    precision: "full",
+    format: "both",
+  });
+
   const response = {
     ...trayecto,
-    conductor: conductorName,
+    conductor: trayecto.conductor, // UUID original del conductor
     conductor_id: trayecto.conductor,
-    img_perfil: imgPerfil,
     hora: fechaHora,
     fecha,
     valorado,
-    driverPreferences,
-    pasajeros,
+    pasajeros: reservas.map((r) => ({
+      id_reserva: r.id_reserva,
+      user_id: r.user_id,
+      status: r.status,
+      trip_outcome: r.trip_outcome,
+      created_at: r.created_at,
+    })),
     eventos: eventos.map((e) => ({
       id: e.id,
       tipo_evento: e.TipoEvento?.nombre,
@@ -2448,11 +2499,10 @@ async function obtenerTrayectoCompleto(req, res) {
       rating: c.rating,
       created_at: c.created_at,
     })),
-    route: RouteGeometryService.resolvePolyline(trayecto, {
-      zoom: 15,
-      precision: "full",
-      format: "both", // Devolver tanto encodedPolyline como geometry
-    }),
+    route,
+    puntosClave: route.keyPoints,
+    geometry: route.geometry,
+    encodedPolyline: route.encodedPolyline,
   };
 
   return res.status(200).json(response);
@@ -2527,10 +2577,19 @@ async function obtenerTrayectosPorEvento(req, res) {
   }
 
   try {
+    const currentUserId =
+      req.user?.id ||
+      req.user?.userId ||
+      req.query?.userId ||
+      req.headers?.["x-user-id"];
+
     const where = {
       evento_id: eventoId,
       status: { notIn: TRAYECTO_INACTIVE_STATUSES },
     };
+    if (currentUserId) {
+      where.conductor = { not: String(currentUserId) };
+    }
 
     let eventoLat = null;
     let eventoLng = null;
@@ -2551,6 +2610,12 @@ async function obtenerTrayectosPorEvento(req, res) {
       where,
       orderBy: { hora: "asc" },
     });
+
+    if (currentUserId) {
+      rows = rows.filter(
+        (t) => String(t.conductor).toLowerCase() !== String(currentUserId).toLowerCase(),
+      );
+    }
 
     if (direccion === "ida" && eventoLat != null) {
       rows = rows.filter(
@@ -2662,11 +2727,20 @@ async function buscarTrayectosPorEvento(req, res) {
     const eventoLat = parseFloat(eventoInfo.event.latitude);
     const eventoLng = parseFloat(eventoInfo.event.longitude);
 
+    const currentUserId =
+      req.user?.id ||
+      req.user?.userId ||
+      req.query?.userId ||
+      req.headers?.["x-user-id"];
+
     const where = {
       evento_id: eventoId,
       disponible: { gte: 1 },
       status: { notIn: TRAYECTO_INACTIVE_STATUSES },
     };
+    if (currentUserId) {
+      where.conductor = { not: String(currentUserId) };
+    }
 
     if (f && /^\d{4}-\d{2}-\d{2}$/.test(f)) {
       where.hora = {
@@ -2686,6 +2760,12 @@ async function buscarTrayectosPorEvento(req, res) {
         },
       },
     });
+
+    if (currentUserId) {
+      rows = rows.filter(
+        (t) => String(t.conductor).toLowerCase() !== String(currentUserId).toLowerCase(),
+      );
+    }
 
     if (dir === "ida") {
       rows = rows.filter(

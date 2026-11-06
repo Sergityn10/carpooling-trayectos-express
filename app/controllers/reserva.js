@@ -372,10 +372,10 @@ async function addReserva(req, res) {
             trayecto.destino,
           success_url: return_url
             ? return_url
-            : frontend_url + "trayecto/" + trayecto_id,
+            : frontend_url + "/trayecto/" + trayecto_id,
           cancel_url: return_url
             ? return_url
-            : frontend_url + "trayecto/" + trayecto_id,
+            : frontend_url + "/trayecto/" + trayecto_id,
         },
         { headers },
       );
@@ -1051,9 +1051,9 @@ async function retomarPagoReserva(req, res) {
 
   try {
     const success_url =
-      return_url || frontend_url + "trayecto/" + reserva.id_trayecto;
+      return_url || frontend_url + "/trayecto/" + reserva.id_trayecto;
     const cancel_url =
-      return_url || frontend_url + "trayecto/" + reserva.id_trayecto;
+      return_url || frontend_url + "/trayecto/" + reserva.id_trayecto;
 
     const resumeResult = await PaymentsAPI.resumePaymentSession(
       {
