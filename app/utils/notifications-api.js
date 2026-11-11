@@ -2,19 +2,30 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const NOTIFICATIONS_URL =
-  process.env.NOTIFICATIONS_URL || "http://localhost:3004";
 const DEFAULT_TIMEOUT_MS = 10000;
+const BATCH_TIMEOUT_MS = 4000;
 
-async function _post(path, body, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  const url = `${NOTIFICATIONS_URL}${path}`;
+function getNotificationsBaseUrl() {
+  return (
+    process.env.NOTIFICATIONS_SERVICE_URL ||
+    process.env.NOTIFICATIONS_URL ||
+    "http://localhost:3004"
+  );
+}
+
+async function _post(
+  path,
+  body,
+  { timeoutMs = DEFAULT_TIMEOUT_MS, headers = {} } = {},
+) {
+  const url = `${getNotificationsBaseUrl()}${path}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(body),
       signal: controller.signal,
     });
@@ -172,6 +183,33 @@ async function sendPushTemplatedToUser({
   return _post("/api/push/send/template/user", body);
 }
 
+/**
+ * Envía una notificación batch a carpooling-notifications (HTTP fallback).
+ */
+async function sendBatchNotification(
+  { idempotencyKey, type, channels, priority, sharedData, userIds },
+  { timeoutMs = BATCH_TIMEOUT_MS } = {},
+) {
+  const apiKey = process.env.INTERNAL_SERVICE_API_KEY || "";
+  const headers = {
+    "X-Service-Api-Key": apiKey,
+    ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+  };
+
+  return _post(
+    "/api/notifications/batch",
+    {
+      idempotencyKey,
+      type,
+      channels,
+      priority,
+      sharedData,
+      userIds,
+    },
+    { timeoutMs, headers },
+  );
+}
+
 export const NotificationsAPI = {
   sendEmail,
   sendTemplatedEmail,
@@ -184,4 +222,5 @@ export const NotificationsAPI = {
   unsubscribeFromTopic,
   sendPushMulticast,
   sendPushTemplatedToUser,
+  sendBatchNotification,
 };

@@ -1,11 +1,12 @@
 import amqp from "amqplib";
 import dotenv from "dotenv";
+import { EXCHANGE, PUBLISH_OPTIONS } from "../constants/notificationEvents.js";
 
 dotenv.config();
 
 const RABBITMQ_URL =
   process.env.RABBITMQ_URL || "amqp://carpooling:carpooling123@localhost:5672";
-const EXCHANGE_NAME = process.env.RABBITMQ_EXCHANGE || "carpooling_events";
+const EXCHANGE_NAME = process.env.RABBITMQ_EXCHANGE || EXCHANGE;
 const APP_QUEUE_NAME = "carpooling_trayectos_events";
 
 let connection = null;
@@ -64,11 +65,13 @@ async function publishEvent(routingKey, data, source = "carpooling-trayectos") {
       EXCHANGE_NAME,
       routingKey,
       Buffer.from(JSON.stringify(message)),
-      { persistent: true },
+      { ...PUBLISH_OPTIONS },
     );
     console.log(`[RabbitMQ] Evento publicado: ${routingKey}`);
+    return true;
   } catch (error) {
     console.error(`[RabbitMQ] Error publicando evento ${routingKey}:`, error.message);
+    return false;
   }
 }
 

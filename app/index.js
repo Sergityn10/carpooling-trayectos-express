@@ -23,6 +23,8 @@ import { OilPriceProvider } from "./providers/precio-oil.js";
 import { CAEUtils } from "./utils/cae.js";
 import { AdminController } from "./controllers/admin.js";
 import { startRabbitMQ } from "./rabbitmq/index.js";
+import { initAlertasListener } from "./listeners/alertasListener.js";
+import { alertasRouter } from "./routes/alertasRouter.js";
 import { trackTrayectoSearch } from "./middleware/search-tracker.js";
 import {
   generalLimiter,
@@ -79,6 +81,7 @@ startTrayectoChatCleanupCron({
 });
 
 startRabbitMQ();
+initAlertasListener();
 
 let port = process.env.PORT || 4001;
 //Configuracion del puerto del servidor
@@ -337,6 +340,9 @@ app.delete(
     TrayectosController.eliminarTrayecto(req, res);
   },
 );
+
+// ALERTAS DE TRAYECTOS
+app.use("/api/alertas", alertasRouter);
 
 //CAE
 app.get(

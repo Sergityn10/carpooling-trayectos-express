@@ -82,6 +82,7 @@ export async function cleanTestDB() {
     "user_preferences",
     "ubicaciones",
     "trayecto_search_history",
+    "alertas_trayectos",
     "info_caes",
     "cae_reports",
   ];

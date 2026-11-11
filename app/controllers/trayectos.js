@@ -18,6 +18,10 @@ import { ReservaController } from "./reserva.js";
 import { PaginationUtils } from "../utils/pagination.js";
 import { RoutingEngine } from "../services/routing/routing-engine.js";
 import { RouteGeometryService } from "../services/routing/geometry-service.js";
+import {
+  trayectoEmitter,
+  TRAYECTO_DOMAIN_EVENTS,
+} from "../events/trayectoEmitter.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -993,6 +997,16 @@ async function crearTrayecto(req, res) {
       );
     }
   }
+
+  trayectoEmitter.emit(TRAYECTO_DOMAIN_EVENTS.NUEVO_TRAYECTO_CREADO, {
+    ...newTrayecto,
+    disponible,
+    organizadorId: String(conductor_id),
+    driverName: conductorName,
+    evento_id: evento_id ?? null,
+    eventoId: evento_id ?? null,
+    destinoCiudad: destinationDetails?.city ?? null,
+  });
 
   return res.status(201).send({
     status: "Success",
